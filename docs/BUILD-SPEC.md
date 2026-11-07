@@ -8,7 +8,7 @@
 |---|---|
 | Product | FilaLaunch — SaaS starter kit · [filalaunch.com](https://filalaunch.com) |
 | Repository | `github.com/filalaunch/filalaunch` (MIT) |
-| Spec version | 1.0 — Step 1 complete |
+| Spec version | 1.1 — Step 2 complete (auto permissions + default-deny policy) |
 | Last updated | 2026-11-07 |
 
 ---
@@ -64,7 +64,10 @@ app/
 │   ├── User.php          HasRoles, MustVerifyEmail, FilamentUser, 2FA contracts
 │   ├── Role.php          extends Spatie Role (+ protectedNames(), isProtected(), isSuperAdmin())
 │   └── Permission.php    extends Spatie Permission (+ getGroup())
-├── Policies/             one policy per model, auto-discovered (App\Models\X → App\Policies\XPolicy)
+├── Policies/
+│   ├── ResourcePolicy.php   abstract base: every ability → "{prefix}.{ability}" permission
+│   ├── DefaultPolicy.php    fallback for models without their own policy (no permission = no access)
+│   └── {Model}Policy.php    optional, only for extra safety rules (User, Role, Permission)
 ├── Providers/
 │   ├── AppServiceProvider.php            Gate::after Super Admin rule
 │   └── Filament/AdminPanelProvider.php   panel id "admin", path "/admin", auth features
@@ -73,7 +76,7 @@ config/filalaunch.php            kit settings (super admin, role names, abilitie
 config/permission.php            Spatie config — models point to App\Models\Role / Permission
 database/migrations/             users table includes 2FA columns
 database/seeders/                DatabaseSeeder → RolesAndPermissionsSeeder → SuperAdminSeeder
-stubs/filalaunch-policy.stub     template used by sync-permissions --policies
+stubs/filalaunch-policy.stub     policy scaffold (extends ResourcePolicy) used by sync-permissions --policies
 docs/BUILD-SPEC.md               this file
 CLAUDE.md                        AI entry point → this file
 art/                             logo assets (README)
@@ -159,19 +162,53 @@ Permissions without a dot are grouped under **Other** in the UI.
 
 ### 6.3 Policy ↔ permission mapping
 
+Defined once in `PermissionSync::ABILITY_MAP`, resolved by `PermissionSync::permissionFor($modelClass, $ability)`.
+
 | Policy method | Permission |
 |---|---|
 | `viewAny` | `{prefix}.view_any` |
 | `view` | `{prefix}.view` |
-| `create` | `{prefix}.create` |
-| `update` | `{prefix}.update` |
+| `create`, `replicate` | `{prefix}.create` |
+| `update`, `reorder`, `attach(Any)`, `detach(Any)`, `associate(Any)`, `dissociate(Any)` | `{prefix}.update` |
 | `delete`, `deleteAny` | `{prefix}.delete` |
 | `restore`, `restoreAny` | `{prefix}.restore` |
 | `forceDelete`, `forceDeleteAny` | `{prefix}.force_delete` |
+| any other ability, e.g. `export` | `{prefix}.export` (snake_case) |
 
-Policy bodies **must** check via `$user->can('{prefix}.{ability}')` — never `hasRole()` — so roles stay data-driven.
+Policies **must** check permissions — never `hasRole()` — so roles stay data-driven.
 
-### 6.4 Super Admin
+### 6.4 Policy resolution (secure by default)
+
+```php
+// AppServiceProvider::boot()
+Gate::guessPolicyNamesUsing(fn (string $class) =>
+    is_subclass_of($class, Model::class)
+        ? ['App\Policies\{Model}Policy', DefaultPolicy::class]   // first existing class wins
+        : ['App\Policies\{Model}Policy']);
+```
+
+| Class | Role |
+|---|---|
+| `ResourcePolicy` (abstract) | Real methods for **every** ability Filament checks (Filament uses `method_exists()`; a missing method would mean *allowed*). Each calls `$this->allows($user, '<ability>')`. Model is derived from the class name (`UserPolicy` → `App\Models\User`) or `protected ?string $model`. `__call` handles custom abilities. |
+| `DefaultPolicy` | Extends `ResourcePolicy`; `before($user, $ability, $subject)` resolves the permission from the model class/record Laravel passes in and always decides. Guards every model without its own policy. |
+| `{Model}Policy` | Optional. Extends `ResourcePolicy`, overrides only methods that need safety rules, then returns `parent::method(...)`. Override signatures must keep the parent types (`Model $record`) — use `@param` for the concrete type. |
+
+The panel also runs `->strictAuthorization()`: if an ability ever has no policy method, Filament throws instead of allowing.
+
+### 6.5 Automatic permission creation
+
+```php
+// AdminPanelProvider
+->bootUsing(fn (Panel $panel) => app(PermissionSync::class)->ensureSynced($panel->getId()))
+```
+
+- On every panel request, `ensureSynced()` compares the permissions all registered resources need (`expectedPermissions()`) with Spatie's **cached** permission list. Only if something is missing does it run `sync()` (`firstOrCreate`, then flush Spatie's cache).
+- Covers resources added by artisan, by hand, or generated from a GUI — nothing to run.
+- Permissions are **only created** — never assigned to roles/users and never deleted. Leftovers from removed resources are deleted manually on the Permissions page.
+- A `QueryException` (database not migrated yet) is swallowed so a fresh install doesn't crash.
+- Manual fallbacks: `php artisan filalaunch:sync-permissions`, the **Sync from resources** button, and `RolesAndPermissionsSeeder`.
+
+### 6.6 Super Admin
 
 ```php
 // AppServiceProvider::boot()
@@ -183,7 +220,7 @@ Gate::after(fn ($user, $ability, $result) =>
 - Inside a policy, `$user->can('users.delete')` for a Super Admin resolves to `true` via this hook (Spatie's gate returns `null` when the permission isn't held).
 - The `super_admin` role therefore needs **no** permissions attached.
 
-### 6.5 Effective permissions
+### 6.7 Effective permissions
 
 `role permissions ∪ direct permissions` — handled by Spatie (`$user->can()`, `hasPermissionTo()`).
 
@@ -206,6 +243,9 @@ Any change must keep all of these true. Each is enforced where noted.
 | I9 | 2FA secrets and recovery codes are encrypted at rest and hidden from serialization | Filament traits on `User` |
 | I10 | Bulk deletes authorize each record individually | `DeleteBulkAction::authorizeIndividualRecords('delete')` in every table |
 | I11 | Seeders are idempotent; Super Admin password is never overwritten on re-seed | `SuperAdminSeeder` uses `firstOrCreate` |
+| I12 | Every model is guarded; no permission = no access (except Super Admin) | `Gate::guessPolicyNamesUsing` → `DefaultPolicy`, `strictAuthorization()` |
+| I13 | Every ability Filament checks exists as a real method on `ResourcePolicy` | `ResourcePolicy` (add a method when Filament adds an ability) |
+| I14 | Automation only creates permissions — never assigns or deletes them | `PermissionSync` |
 
 ---
 
@@ -270,16 +310,17 @@ If the checkboxes are disabled, the key is absent → permissions are left untou
 
 1. `php artisan make:model Project -m` → add columns → `php artisan migrate`
 2. `php artisan make:filament-resource Project --not-embedded --record-title-attribute=name`
-3. `php artisan filalaunch:sync-permissions --policies` → creates `projects.*` permissions + `app/Policies/ProjectPolicy.php` from the stub
-4. Add `->authorizeIndividualRecords('delete')` to the table's `DeleteBulkAction` (I10)
-5. Add any safety rules to the policy **before** the `$user->can(...)` return
-6. Optionally grant the new permissions to `admin` in `RolesAndPermissionsSeeder`
-7. Update §3 / §11 of this spec
+3. Add `->authorizeIndividualRecords('delete')` to the table's `DeleteBulkAction` (I10)
+4. Done. `projects.*` permissions are created on the next panel request and `DefaultPolicy` guards the model. The Super Admin assigns them to roles/users.
+5. Only if the model needs safety rules: `php artisan filalaunch:sync-permissions --policies` scaffolds `app/Policies/ProjectPolicy.php` (extends `ResourcePolicy`); override the method, return `false` for the rule, else `parent::method(...)`
+6. Update §3 / §11 of this spec if it's a kit feature
+
+A GUI resource builder needs no extra step: once its resource class is registered in the panel, steps 4–5 apply unchanged. It may call `app(PermissionSync::class)->sync()` right after generating to create permissions immediately.
 
 ### 10.2 Add a custom permission
 
 1. Create it in the panel (Permissions → New) or in a seeder via `Permission::firstOrCreate(['name' => 'projects.export', 'guard_name' => 'web'])`
-2. Check it with `$user->can('projects.export')` (or `->authorize(fn () => auth()->user()->can('projects.export'))` on a Filament action)
+2. Check it with `$user->can('export', Project::class)` (resolved by the policy) or `$user->can('projects.export')`; on a Filament action: `->authorize(fn () => auth()->user()->can('export', Project::class))`
 
 ### 10.3 Add a seeded role
 
@@ -304,6 +345,8 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 1 | Super Admin seeded from `.env` | ✅ |
 | 1 | Users / Roles / Permissions resources, role-level + direct permissions | ✅ |
 | 1 | `filalaunch:sync-permissions [--policies]` + UI sync button | ✅ |
+| 2 | Automatic permission creation for every resource (panel boot check) | ✅ |
+| 2 | Default-deny `DefaultPolicy` + `ResourcePolicy` base + strict authorization | ✅ |
 | — | Next modules | to be defined (see filalaunch.com) |
 
 ---
@@ -313,7 +356,7 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 1. **Read before writing.** Check this spec and the files you touch; follow existing patterns.
 2. **Surgical changes.** Change only what the task needs; don't rewrite working files or reformat unrelated code.
 3. **Respect the invariants (§7)** and the out-of-scope list (§1).
-4. **Authorization goes through policies + permissions.** No role-name checks in resources, no Shield.
+4. **Authorization goes through policies + permissions.** No role-name checks in resources, no Shield. Never add `skipAuthorization()` to a resource or remove `strictAuthorization()`.
 5. **No `env()` outside config.** No hard-coded role names.
 6. **Use Filament v4 APIs** (`Filament\Schemas\…`, `Filament\Actions\…`, `Heroicon` enum). Don't copy v3 snippets (`Forms\Form`, `Tables\Actions\…`).
 7. **Verify** before finishing: `php artisan migrate:fresh --seed`, open the affected pages, `vendor/bin/pint`.
@@ -344,4 +387,6 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2026-11-07 | `filalaunch:sync-permissions` generates permissions (and optionally policies) for new resources |
 | 2026-11-07 | Dev phase: existing migrations may be edited |
 | 2026-11-07 | Panel color stays Amber for now |
+| 2026-11-07 | Permissions for every resource are created automatically (panel `bootUsing` → `ensureSynced`); only created, never assigned or deleted — assignment is the Super Admin's job |
+| 2026-11-07 | Every model guarded by default: `DefaultPolicy` fallback via `Gate::guessPolicyNamesUsing`; custom policies extend `ResourcePolicy` and hold only safety rules; panel uses `strictAuthorization()` |
 | 2026-11-07 | Default `QUEUE_CONNECTION=sync` so the kit runs on shared hosting without a worker; README documents cron and Supervisor setups |

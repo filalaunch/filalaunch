@@ -3,8 +3,11 @@
 namespace App\Providers;
 
 use App\Models\User;
+use App\Policies\DefaultPolicy;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -30,6 +33,18 @@ class AppServiceProvider extends ServiceProvider
             }
 
             return null;
+        });
+
+        // Every model is guarded: App\Policies\{Model}Policy if it exists,
+        // otherwise DefaultPolicy ("{resource}.{ability}" permission, no permission = no access).
+        Gate::guessPolicyNamesUsing(function (string $class): array {
+            $policy = Str::startsWith($class, 'App\\Models\\')
+                ? 'App\\Policies\\'.Str::after($class, 'App\\Models\\').'Policy'
+                : 'App\\Policies\\'.class_basename($class).'Policy';
+
+            return is_subclass_of($class, Model::class)
+                ? [$policy, DefaultPolicy::class]
+                : [$policy];
         });
     }
 }

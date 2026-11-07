@@ -4,45 +4,36 @@ namespace App\Policies;
 
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
 
-class RolePolicy
+/**
+ * Standard checks (roles.view_any, roles.create, ...) are inherited from ResourcePolicy.
+ * Only the safety rules live here.
+ */
+class RolePolicy extends ResourcePolicy
 {
-    public function viewAny(User $user): bool
-    {
-        return $user->can('roles.view_any');
-    }
-
-    public function view(User $user, Role $role): bool
-    {
-        return $user->can('roles.view');
-    }
-
-    public function create(User $user): bool
-    {
-        return $user->can('roles.create');
-    }
-
-    public function update(User $user, Role $role): bool
+    /**
+     * @param  Role  $record
+     */
+    public function update(User $user, Model $record): bool
     {
         // super_admin already bypasses every check, so editing it is meaningless.
-        if ($role->isSuperAdmin()) {
+        if ($record->isSuperAdmin()) {
             return false;
         }
 
-        return $user->can('roles.update');
+        return parent::update($user, $record);
     }
 
-    public function delete(User $user, Role $role): bool
+    /**
+     * @param  Role  $record
+     */
+    public function delete(User $user, Model $record): bool
     {
-        if ($role->isProtected()) {
+        if ($record->isProtected()) {
             return false;
         }
 
-        return $user->can('roles.delete');
-    }
-
-    public function deleteAny(User $user): bool
-    {
-        return $user->can('roles.delete');
+        return parent::delete($user, $record);
     }
 }

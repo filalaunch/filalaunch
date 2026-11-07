@@ -12,7 +12,8 @@ Laravel 12 + FilamentPHP 4 SaaS starter kit. Admin panel at `/admin`, Spatie Per
 - Authorization = Laravel policies calling `$user->can('{resource}.{ability}')`. No Filament Shield, no role-name checks in resources.
 - Never call `env()` outside `config/`. Role names come from `config('filalaunch.roles.*')`.
 - Use Filament v4 APIs (`Filament\Schemas\Components`, `Filament\Actions`, `Heroicon` enum).
-- After adding a resource: `php artisan filalaunch:sync-permissions --policies`.
+- New resources need no policy or command: permissions are auto-created and `DefaultPolicy` denies access until the Super Admin grants them. Write a `{Model}Policy extends ResourcePolicy` only for extra safety rules.
+- Never assign permissions automatically.
 - Keep the invariants in BUILD-SPEC §7 true.
 - Verify with `php artisan migrate:fresh --seed` and `vendor/bin/pint`.
 - Update `docs/BUILD-SPEC.md` when architecture, conventions or features change.

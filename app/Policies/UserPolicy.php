@@ -3,61 +3,52 @@
 namespace App\Policies;
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
 
-class UserPolicy
+/**
+ * Standard checks (users.view_any, users.create, ...) are inherited from ResourcePolicy.
+ * Only the safety rules live here.
+ */
+class UserPolicy extends ResourcePolicy
 {
-    public function viewAny(User $user): bool
-    {
-        return $user->can('users.view_any');
-    }
-
-    public function view(User $user, User $model): bool
-    {
-        return $user->can('users.view');
-    }
-
-    public function create(User $user): bool
-    {
-        return $user->can('users.create');
-    }
-
-    public function update(User $user, User $model): bool
+    /**
+     * @param  User  $record
+     */
+    public function update(User $user, Model $record): bool
     {
         // Only a Super Admin may edit a Super Admin.
-        if ($model->isSuperAdmin() && ! $user->isSuperAdmin()) {
+        if ($record->isSuperAdmin() && ! $user->isSuperAdmin()) {
             return false;
         }
 
-        return $user->can('users.update');
+        return parent::update($user, $record);
     }
 
-    public function delete(User $user, User $model): bool
+    /**
+     * @param  User  $record
+     */
+    public function delete(User $user, Model $record): bool
     {
         // Nobody deletes themselves.
-        if ($user->is($model)) {
+        if ($user->is($record)) {
             return false;
         }
 
-        if ($model->isSuperAdmin()) {
+        if ($record->isSuperAdmin()) {
             // Only a Super Admin may delete a Super Admin, and never the last one.
             if (! $user->isSuperAdmin() || User::role(config('filalaunch.roles.super_admin'))->count() <= 1) {
                 return false;
             }
         }
 
-        return $user->can('users.delete');
-    }
-
-    public function deleteAny(User $user): bool
-    {
-        return $user->can('users.delete');
+        return parent::delete($user, $record);
     }
 
     /**
      * Reset another user's 2FA (authenticator app + recovery codes).
      */
-    public function resetTwoFactor(User $user, User $model): bool
+    public function resetTwoFactor(User $user, User $record): bool
     {
-        return $model->hasAppAuthenticationEnabled() && $this->update($user, $model);
+        return $record->hasAppAuthenticationEnabled() && $this->update($user, $record);
     }
 }

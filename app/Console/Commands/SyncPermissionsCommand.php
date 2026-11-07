@@ -11,9 +11,9 @@ class SyncPermissionsCommand extends Command
 {
     protected $signature = 'filalaunch:sync-permissions
                             {--panel=admin : Filament panel ID to scan for resources}
-                            {--policies : Also generate missing policy classes from stubs/filalaunch-policy.stub}';
+                            {--policies : Also scaffold a policy class (only needed to add extra rules — models are guarded by DefaultPolicy without one)}';
 
-    protected $description = 'Create standard permissions ({resource}.{ability}) for every Filament resource';
+    protected $description = 'Create missing {resource}.{ability} permissions for every Filament resource (also runs automatically on panel requests)';
 
     public function handle(PermissionSync $sync, Filesystem $files): int
     {

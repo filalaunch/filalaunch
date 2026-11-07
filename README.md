@@ -73,9 +73,9 @@ Everything below works out of the box after `migrate --seed`.
 | **Permissions** | Create, edit, delete permissions · grouped by resource · one-click **Sync from resources** |
 
 - **Permissions at two levels** — attach them to a role, directly to a user, or both. A user's effective permissions are the union.
-- **Policy-based authorization** — every resource is protected by a standard Laravel policy. No extra authorization package.
+- **Secure by default** — every model is guarded by a policy automatically. No permission = no access; a new resource stays hidden until the Super Admin grants it. No extra authorization package.
 - **Predictable permission names** — `{resource}.{ability}`, e.g. `users.view_any`, `users.create`, `invoices.delete`.
-- **Auto-generate permissions** — `php artisan filalaunch:sync-permissions` creates the standard set for every Filament resource, and can scaffold the policy too.
+- **Permissions create themselves** — add a Filament resource and its `view_any / view / create / update / delete` permissions appear on the next panel visit. Nothing to run, nothing assigned automatically.
 
 ### Built-in safety rules
 
@@ -248,9 +248,9 @@ The resource prefix is the model name in plural snake case: `User → users`, `B
 
 ### How a check is decided
 
-1. The resource calls the model's **policy** (e.g. `UserPolicy@update`).
-2. The policy runs any **safety rule** first (e.g. "can't edit a Super Admin") and returns `false` if it fails.
-3. Otherwise it returns `$user->can('users.update')`, which is true if **any role or a direct permission** grants it.
+1. The resource calls the model's **policy** — its own `App\Policies\{Model}Policy` if one exists, otherwise the built-in `DefaultPolicy`.
+2. A custom policy runs its **safety rules** first (e.g. "can't edit a Super Admin") and returns `false` if one fails.
+3. Otherwise the check becomes `$user->can('users.update')`, which is true if **any role or a direct permission** grants it. No permission → denied.
 4. A **Super Admin** passes every check that a safety rule didn't explicitly deny.
 
 ---
@@ -267,18 +267,22 @@ php artisan migrate
 
 # 2. Filament resource
 php artisan make:filament-resource Project
-
-# 3. Permissions (projects.view_any … projects.delete) + a ready-made ProjectPolicy
-php artisan filalaunch:sync-permissions --policies
 ```
 
-4. In the panel, open **Roles**, tick the new `Projects` permissions for the right roles, and save.
+3. Open the panel. `projects.view_any`, `projects.view`, `projects.create`, `projects.update` and `projects.delete` are created automatically. Until you grant them, only the Super Admin can see Projects.
+4. Open **Roles** (or a **User**), tick the `Projects` permissions you want, and save.
 
-That's it — the menu item, buttons and pages now follow those permissions.
+That's it — no policy file, no command. The menu item, buttons and pages follow those permissions.
 
-> Prefer clicking? **Access Control → Permissions → Sync from resources** does step 3 (permissions only, not policies).
+**Need extra rules?** (e.g. "locked projects can't be deleted") Scaffold a policy and override only that method:
 
-Custom permission (e.g. `projects.export`)? Create it under **Permissions**, then check it in your code with `$user->can('projects.export')`.
+```bash
+php artisan filalaunch:sync-permissions --policies   # creates app/Policies/ProjectPolicy.php
+```
+
+**Custom permission** (e.g. `projects.export`)? Create it under **Permissions**, then check it with `$user->can('export', Project::class)` or `$user->can('projects.export')`.
+
+> Permissions are only ever **created** automatically — never assigned and never deleted. If you remove a resource, delete its leftover permissions from the Permissions page.
 
 ---
 
@@ -325,8 +329,8 @@ Then run `php artisan migrate --seed`.
 | `php artisan migrate --seed` | Create tables + seed roles, permissions, Super Admin |
 | `php artisan migrate:fresh --seed` | Reset everything |
 | `php artisan db:seed --class=SuperAdminSeeder` | (Re)create the Super Admin from `.env` |
-| `php artisan filalaunch:sync-permissions` | Create missing permissions for all resources |
-| `php artisan filalaunch:sync-permissions --policies` | Same + generate missing policy classes |
+| `php artisan filalaunch:sync-permissions` | Create missing permissions now (also happens automatically) |
+| `php artisan filalaunch:sync-permissions --policies` | Same + scaffold policy classes for adding extra rules |
 | `php artisan permission:cache-reset` | Clear Spatie's permission cache |
 | `php artisan queue:work` | Process queued jobs (only when `QUEUE_CONNECTION` isn't `sync`) |
 | `php artisan queue:restart` | Restart workers after a deploy |
@@ -348,9 +352,10 @@ app/
 │   │   └── Permissions/  (Schemas/, Tables/, Pages/)
 │   └── Support/PermissionCheckboxes.php          # grouped checkbox UI
 ├── Models/                 User, Role, Permission
-├── Policies/               UserPolicy, RolePolicy, PermissionPolicy
+├── Policies/               ResourcePolicy (base), DefaultPolicy (fallback),
+│                           UserPolicy, RolePolicy, PermissionPolicy
 ├── Providers/
-│   ├── AppServiceProvider.php                    # Super Admin gate
+│   ├── AppServiceProvider.php                    # Super Admin gate + default policy
 │   └── Filament/AdminPanelProvider.php           # panel + auth features
 └── Support/Permissions/PermissionSync.php        # permission generator
 config/filalaunch.php                             # kit settings
@@ -377,6 +382,7 @@ Using Cursor, Copilot or another tool? Add `docs/BUILD-SPEC.md` to its context b
 FilaLaunch is built in small, tested steps.
 
 - [x] **Step 1** — Admin panel auth (login, registration, email verification, password reset, profile, 2FA) + dynamic users, roles & permissions
+- [x] **Step 2** — Automatic permissions for every resource + secure-by-default policies (no permission = no access)
 - [ ] More modules — follow progress and release notes at **[filalaunch.com](https://filalaunch.com)**
 
 ---

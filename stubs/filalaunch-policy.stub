@@ -2,58 +2,28 @@
 
 namespace App\Policies;
 
-use App\Models\User;
 use App\Models\{{ model }};
+use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
 
-class {{ model }}Policy
+/**
+ * Standard checks ({{ prefix }}.view_any, .view, .create, .update, .delete) are inherited
+ * from ResourcePolicy. You only need this file to add extra rules — without it,
+ * DefaultPolicy guards {{ model }} the same way.
+ */
+class {{ model }}Policy extends ResourcePolicy
 {
-    public function viewAny(User $user): bool
-    {
-        return $user->can('{{ prefix }}.view_any');
-    }
-
-    public function view(User $user, {{ model }} $record): bool
-    {
-        return $user->can('{{ prefix }}.view');
-    }
-
-    public function create(User $user): bool
-    {
-        return $user->can('{{ prefix }}.create');
-    }
-
-    public function update(User $user, {{ model }} $record): bool
-    {
-        return $user->can('{{ prefix }}.update');
-    }
-
-    public function delete(User $user, {{ model }} $record): bool
-    {
-        return $user->can('{{ prefix }}.delete');
-    }
-
-    public function deleteAny(User $user): bool
-    {
-        return $user->can('{{ prefix }}.delete');
-    }
-
-    public function restore(User $user, {{ model }} $record): bool
-    {
-        return $user->can('{{ prefix }}.restore');
-    }
-
-    public function restoreAny(User $user): bool
-    {
-        return $user->can('{{ prefix }}.restore');
-    }
-
-    public function forceDelete(User $user, {{ model }} $record): bool
-    {
-        return $user->can('{{ prefix }}.force_delete');
-    }
-
-    public function forceDeleteAny(User $user): bool
-    {
-        return $user->can('{{ prefix }}.force_delete');
-    }
+    // Example: block deleting locked records, otherwise use the permission check.
+    //
+    // /**
+    //  * @param  {{ model }}  $record
+    //  */
+    // public function delete(User $user, Model $record): bool
+    // {
+    //     if ($record->is_locked) {
+    //         return false;
+    //     }
+    //
+    //     return parent::delete($user, $record);
+    // }
 }

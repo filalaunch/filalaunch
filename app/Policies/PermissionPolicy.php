@@ -2,38 +2,12 @@
 
 namespace App\Policies;
 
-use App\Models\Permission;
-use App\Models\User;
-
-class PermissionPolicy
+/**
+ * No extra rules — all checks (permissions.view_any, permissions.create, ...)
+ * come from ResourcePolicy. Kept as an explicit example; deleting this file
+ * changes nothing, because DefaultPolicy would guard the model the same way.
+ */
+class PermissionPolicy extends ResourcePolicy
 {
-    public function viewAny(User $user): bool
-    {
-        return $user->can('permissions.view_any');
-    }
-
-    public function view(User $user, Permission $permission): bool
-    {
-        return $user->can('permissions.view');
-    }
-
-    public function create(User $user): bool
-    {
-        return $user->can('permissions.create');
-    }
-
-    public function update(User $user, Permission $permission): bool
-    {
-        return $user->can('permissions.update');
-    }
-
-    public function delete(User $user, Permission $permission): bool
-    {
-        return $user->can('permissions.delete');
-    }
-
-    public function deleteAny(User $user): bool
-    {
-        return $user->can('permissions.delete');
-    }
+    //
 }

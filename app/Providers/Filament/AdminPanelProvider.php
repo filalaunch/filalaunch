@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Pages\Auth\Register;
+use App\Support\Permissions\PermissionSync;
 use Filament\Auth\MultiFactor\App\AppAuthentication;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -38,6 +39,10 @@ class AdminPanelProvider extends PanelProvider
                 AppAuthentication::make()
                     ->recoverable(),
             ])
+            // Fail loudly if an ability has no policy method (instead of silently allowing).
+            ->strictAuthorization()
+            // Auto-create "{resource}.{ability}" permissions for new resources (never assigns).
+            ->bootUsing(fn (Panel $panel) => app(PermissionSync::class)->ensureSynced($panel->getId()))
             ->colors([
                 'primary' => Color::Amber,
             ])
