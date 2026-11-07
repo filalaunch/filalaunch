@@ -94,6 +94,8 @@ class ModuleTrashWidget extends TableWidget
                     ->action(function (array $record): void {
                         app(ModuleTrash::class)->purge($record['id']);
                         Notification::make()->success()->title('Backup deleted')->send();
+
+                        $this->redirect(Modules::getUrl());
                     }),
             ])
             ->headerActions([
@@ -107,6 +109,8 @@ class ModuleTrashWidget extends TableWidget
                     ->action(function (): void {
                         $count = app(ModuleTrash::class)->purgeAll();
                         Notification::make()->success()->title("{$count} backups deleted")->send();
+
+                        $this->redirect(Modules::getUrl());
                     }),
             ]);
     }

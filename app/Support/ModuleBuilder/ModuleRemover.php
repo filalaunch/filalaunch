@@ -36,6 +36,9 @@ class ModuleRemover
     /** Relations meaning another model depends on the deleted one — must be handled first. */
     protected const BLOCKING_RELATIONS = ['belongsTo', 'belongsToMany', 'morphTo', 'morphOne', 'morphMany', 'morphToMany', 'morphedByMany', 'hasManyThrough', 'hasOneThrough'];
 
+    /** @var array{tables: array<string, string>, paths: array<string, string>, models: list<string>}|null */
+    protected ?array $index = null;
+
     public function __construct(
         protected Filesystem $files,
         protected ModuleTrash $trash,
@@ -81,7 +84,13 @@ class ModuleRemover
                 'files' => count($plan['delete']),
                 'edits' => count($plan['edits']),
                 'blockers' => $plan['blockers'],
-                'status' => $plan['blockers'] === [] ? 'Ready' : 'Blocked',
+                'dependents' => array_map(fn (string $m): string => class_basename($m), array_keys($plan['dependents'])),
+                'reasons' => [...$plan['blockers'], ...array_merge([], ...array_values($plan['dependents']))],
+                'status' => match (true) {
+                    $plan['blockers'] !== [] => 'Blocked',
+                    $plan['dependents'] !== [] => 'Has dependents',
+                    default => 'Ready',
+                },
             ];
         }
 
@@ -93,7 +102,12 @@ class ModuleRemover
     /**
      * Work out everything a delete would do — without changing anything.
      *
-     * @return array{model: string, name: string, table: ?string, rows: ?int, resources: list<string>, resource_paths: list<string>, delete: list<string>, edits: array<string, array{description: string, content: string}>, migrations: list<string>, permissions: list<string>, blockers: list<string>, warnings: list<string>}
+     * blockers   = can't be deleted automatically (protected/unknown code depends on it, shared migration…)
+     * dependents = other modules that depend on it: deletable together via deleteWithDependents()
+     *
+     * All paths are normalised to forward slashes (Windows-safe comparisons and array keys).
+     *
+     * @return array{model: string, name: string, table: ?string, rows: ?int, resources: list<string>, resource_paths: list<string>, delete: list<string>, edits: array<string, array{description: string, content: string}>, migrations: list<string>, permissions: list<string>, blockers: list<string>, dependents: array<string, list<string>>, warnings: list<string>}
      */
     public function inspect(string $model): array
     {
@@ -101,7 +115,7 @@ class ModuleRemover
         $plan = [
             'model' => $model, 'name' => $name, 'table' => null, 'rows' => null,
             'resources' => [], 'resource_paths' => [], 'delete' => [], 'edits' => [],
-            'migrations' => [], 'permissions' => [], 'blockers' => [], 'warnings' => [],
+            'migrations' => [], 'permissions' => [], 'blockers' => [], 'dependents' => [], 'warnings' => [],
         ];
 
         if (in_array($model, static::protectedModels(), true)) {
@@ -118,6 +132,7 @@ class ModuleRemover
 
         // ── Model file ──
         $modelFile = (new ReflectionClass($model))->getFileName();
+        $modelFile = $modelFile ? $this->normalise($modelFile) : false;
 
         if ($modelFile && ! is_file($modelFile)) {
             $plan['blockers'][] = "{$name} was already deleted.";
@@ -137,7 +152,7 @@ class ModuleRemover
         foreach ($this->resourcesByModel()[$model] ?? [] as $resource) {
             $plan['resources'][] = $resource;
 
-            foreach ($this->resourcePaths($resource) as $path) {
+            foreach (array_map(fn (string $p): string => $this->normalise($p), $this->resourcePaths($resource)) as $path) {
                 $plan['resource_paths'][] = $path;
                 $plan['delete'][] = $path;
             }
@@ -150,7 +165,7 @@ class ModuleRemover
             app_path("Policies/{$name}Policy.php"),
         ] as $path) {
             if ($this->files->exists($path)) {
-                $plan['delete'][] = $path;
+                $plan['delete'][] = $this->normalise($path);
             }
         }
 
@@ -169,7 +184,8 @@ class ModuleRemover
 
                     foreach (Schema::getForeignKeys($other) as $foreignKey) {
                         if (($foreignKey['foreign_table'] ?? null) === $table) {
-                            $plan['blockers'][] = "Table {$other} has a foreign key to {$table} (".implode(', ', $foreignKey['columns']).') — delete that module first.';
+                            $reason = "Table {$other} has a foreign key to {$table} (".implode(', ', $foreignKey['columns']).').';
+                            $this->dependency($plan, $this->index()['tables'][$other] ?? null, $reason, "{$reason} Remove that column first.");
                         }
                     }
                 }
@@ -179,14 +195,7 @@ class ModuleRemover
         }
 
         // ── Migrations ──
-        foreach ($this->files->glob(database_path('migrations/*.php')) as $migration) {
-            preg_match_all('/Schema::(?:create|table)\(\s*[\'"]([^\'"]+)[\'"]/', $this->files->get($migration), $matches);
-            $tables = array_unique($matches[1]);
-
-            if (! in_array($table, $tables, true)) {
-                continue;
-            }
-
+        foreach ($this->migrationsFor($table) as $migration => $tables) {
             if (count($tables) > 1) {
                 $plan['blockers'][] = 'Migration '.basename($migration).' also changes '.implode(', ', array_diff($tables, [$table])).' — edit it manually first.';
 
@@ -202,8 +211,8 @@ class ModuleRemover
         }
 
         // ── Relationship methods in other models ──
-        foreach ($this->files->glob(app_path('Models/*.php')) as $file) {
-            if ($this->normalise($file) === $this->normalise($modelFile)) {
+        foreach (array_map(fn (string $f): string => $this->normalise($f), $this->files->glob(app_path('Models/*.php'))) as $file) {
+            if ($file === $modelFile) {
                 continue;
             }
 
@@ -211,7 +220,7 @@ class ModuleRemover
         }
 
         // ── DatabaseSeeder line ──
-        $databaseSeeder = database_path('seeders/DatabaseSeeder.php');
+        $databaseSeeder = $this->normalise(database_path('seeders/DatabaseSeeder.php'));
 
         if ($this->files->exists($databaseSeeder)) {
             $source = $this->files->get($databaseSeeder);
@@ -226,8 +235,8 @@ class ModuleRemover
         }
 
         // ── Anything else still referencing the model? Then deleting would break the app. ──
-        foreach ($this->leftoverReferences($model, $plan) as $reference) {
-            $plan['blockers'][] = "{$reference} still uses {$name} — remove that code first.";
+        foreach ($this->leftoverReferences($model, $plan) as $path) {
+            $this->dependency($plan, $this->ownerOf($path), $this->relative($path)." uses {$name}.", $this->relative($path)." still uses {$name} — remove that code first.");
         }
 
         // ── Permissions ──
@@ -237,8 +246,12 @@ class ModuleRemover
             report: false,
         );
 
+        // A module never depends on itself.
+        unset($plan['dependents'][$model]);
+
         $plan['delete'] = array_values(array_unique($plan['delete']));
         $plan['blockers'] = array_values(array_unique($plan['blockers']));
+        $plan['dependents'] = array_map(fn (array $reasons): array => array_values(array_unique($reasons)), $plan['dependents']);
 
         return $plan;
     }
@@ -284,6 +297,10 @@ class ModuleRemover
 
         if ($plan['blockers'] !== []) {
             throw ModuleBuilderException::invalid($plan['blockers']);
+        }
+
+        if ($plan['dependents'] !== []) {
+            throw ModuleBuilderException::invalid(['These modules depend on '.$plan['name'].': '.implode(', ', array_map('class_basename', array_keys($plan['dependents']))).' — delete them too (Delete with dependents).']);
         }
 
         // In-memory backup for rollback (independent of the trash setting).
@@ -346,6 +363,7 @@ class ModuleRemover
         $warnings = [...$plan['warnings'], ...$this->refreshAppCaches(array_keys($plan['edits']))];
 
         $this->trash->prune();
+        $this->index = null;
 
         return [
             'deleted' => array_map(fn (string $path): string => $this->relative($path), $plan['delete']),
@@ -356,35 +374,200 @@ class ModuleRemover
     }
 
     /**
+     * The module plus every module that (recursively) depends on it.
+     *
+     * @return array{models: list<string>, blockers: list<string>}
+     */
+    public function group(string $model): array
+    {
+        $models = [$model];
+        $blockers = [];
+
+        for ($i = 0; $i < count($models); $i++) {
+            $plan = $this->inspect($models[$i]);
+
+            foreach ($plan['blockers'] as $blocker) {
+                $blockers[] = $plan['name'].': '.$blocker;
+            }
+
+            foreach (array_keys($plan['dependents']) as $dependent) {
+                if (! in_array($dependent, $models, true)) {
+                    $models[] = $dependent;
+                }
+            }
+        }
+
+        return ['models' => $models, 'blockers' => array_values(array_unique($blockers))];
+    }
+
+    /**
+     * Delete a module together with every module that depends on it (dependents first).
+     *
+     * @return list<string> deleted module names
+     *
+     * @throws ModuleBuilderException
+     */
+    public function deleteWithDependents(string $model): array
+    {
+        $group = $this->group($model);
+
+        if ($group['blockers'] !== []) {
+            throw ModuleBuilderException::invalid($group['blockers']);
+        }
+
+        return $this->deleteInOrder($group['models']);
+    }
+
+    /**
      * Delete every deletable module, dependents first.
      *
      * @return array{deleted: list<string>, blocked: array<string, list<string>>}
      */
     public function deleteAll(): array
     {
-        $deleted = [];
-
-        // Each pass deletes modules nothing depends on; dependencies clear as their dependents go.
-        for ($pass = 0; $pass < 50; $pass++) {
-            $ready = array_filter($this->modules(), fn (array $module): bool => $module['blockers'] === []);
-
-            if ($ready === []) {
-                break;
-            }
-
-            foreach ($ready as $module) {
-                $this->delete($module['model']);
-                $deleted[] = $module['name'];
-            }
-        }
+        $deleted = $this->deleteInOrder(array_column($this->modules(), 'model'), stopWhenStuck: true);
 
         return [
             'deleted' => $deleted,
-            'blocked' => array_map(fn (array $module): array => $module['blockers'], $this->modules()),
+            'blocked' => array_map(fn (array $module): array => $module['reasons'], $this->modules()),
         ];
     }
 
+    /**
+     * Repeatedly delete the members nothing depends on anymore.
+     *
+     * @param  list<string>  $models
+     * @return list<string>
+     */
+    protected function deleteInOrder(array $models, bool $stopWhenStuck = false): array
+    {
+        $deleted = [];
+        $remaining = $models;
+
+        while ($remaining !== []) {
+            $progress = false;
+
+            foreach ($remaining as $key => $member) {
+                $plan = $this->inspect($member);
+
+                if ($plan['blockers'] === [] && $plan['dependents'] === []) {
+                    $this->delete($member);
+                    $deleted[] = $plan['name'];
+                    unset($remaining[$key]);
+                    $progress = true;
+                }
+            }
+
+            if (! $progress) {
+                if ($stopWhenStuck) {
+                    break;
+                }
+
+                throw ModuleBuilderException::invalid(['Stopped after deleting '.(implode(', ', $deleted) ?: 'nothing').': '.implode(', ', array_map('class_basename', $remaining)).' could not be deleted.']);
+            }
+        }
+
+        return $deleted;
+    }
+
     // ── Internals ────────────────────────────────────────────────────
+
+    /**
+     * Record a dependency: a deletable module → "dependent", anything else → hard blocker.
+     */
+    protected function dependency(array &$plan, ?string $owner, string $reason, string $blocker): void
+    {
+        if ($owner !== null && $owner !== $plan['model'] && in_array($owner, $this->index()['models'], true)) {
+            $plan['dependents'][$owner][] = $reason;
+        } else {
+            $plan['blockers'][] = $blocker;
+        }
+    }
+
+    /**
+     * Tables and files owned by each deletable module (cached for the request).
+     *
+     * @return array{tables: array<string, string>, paths: array<string, string>, models: list<string>}
+     */
+    protected function index(): array
+    {
+        if ($this->index !== null) {
+            return $this->index;
+        }
+
+        $index = ['tables' => [], 'paths' => [], 'models' => []];
+
+        foreach ($this->resourcesByModel() as $model => $resources) {
+            if (in_array($model, static::protectedModels(), true)) {
+                continue;
+            }
+
+            $index['models'][] = $model;
+            $name = class_basename($model);
+            $table = rescue(fn () => (new $model)->getTable(), null, report: false);
+
+            if ($table) {
+                $index['tables'][$table] = $model;
+
+                foreach ($this->migrationsFor($table) as $migration => $tables) {
+                    if (count($tables) === 1) {
+                        $index['paths'][$migration] = $model;
+                    }
+                }
+            }
+
+            $index['paths'][$this->normalise((string) (new ReflectionClass($model))->getFileName())] = $model;
+
+            foreach ($resources as $resource) {
+                foreach ($this->resourcePaths($resource) as $path) {
+                    $index['paths'][$this->normalise($path)] = $model;
+                }
+            }
+
+            foreach ([database_path("factories/{$name}Factory.php"), database_path("seeders/{$name}Seeder.php"), app_path("Policies/{$name}Policy.php")] as $path) {
+                $index['paths'][$this->normalise($path)] = $model;
+            }
+        }
+
+        return $this->index = $index;
+    }
+
+    /**
+     * Module that owns a file (the file itself or a folder containing it).
+     */
+    protected function ownerOf(string $path): ?string
+    {
+        $path = $this->normalise($path);
+
+        foreach ($this->index()['paths'] as $owned => $model) {
+            if ($path === $owned || str_starts_with($path, $owned.'/')) {
+                return $model;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Migrations touching $table => all tables each one touches.
+     *
+     * @return array<string, list<string>>
+     */
+    protected function migrationsFor(string $table): array
+    {
+        $found = [];
+
+        foreach ($this->files->glob(database_path('migrations/*.php')) as $migration) {
+            preg_match_all('/Schema::(?:create|table)\(\s*[\'"]([^\'"]+)[\'"]/', $this->files->get($migration), $matches);
+            $tables = array_values(array_unique($matches[1]));
+
+            if (in_array($table, $tables, true)) {
+                $found[$this->normalise($migration)] = $tables;
+            }
+        }
+
+        return $found;
+    }
 
     /**
      * @return array<class-string<Model>, list<class-string>>
@@ -470,13 +653,13 @@ class ModuleRemover
             $short = class_basename($class);
 
             if (preg_match('/\$this->('.implode('|', self::BLOCKING_RELATIONS).')\(\s*'.$classPattern.'/', $body, $m)) {
-                $plan['blockers'][] = "{$short}::{$method->getName()}() is a {$m[1]} relation to {$name} — delete {$short} first or remove that method.";
+                $this->dependency($plan, $class, "{$short} {$m[1]} {$name}.", "{$short}::{$method->getName()}() is a {$m[1]} relation to {$name} — remove that method first.");
 
                 continue;
             }
 
             if (! preg_match('/^\s*(?:public\s+)?function\s+\w+\s*\(\s*\)[^{]*\{\s*return\s+\$this->('.implode('|', self::REMOVABLE_RELATIONS).')\(\s*'.$classPattern.'\s*(?:,[^;]*)?\)\s*;\s*\}\s*$/s', $body)) {
-                $plan['blockers'][] = "{$short}::{$method->getName()}() uses {$name} — remove it manually.";
+                $this->dependency($plan, $class, "{$short}::{$method->getName()}() uses {$name}.", "{$short}::{$method->getName()}() uses {$name} — remove it manually.");
 
                 continue;
             }
@@ -563,11 +746,11 @@ class ModuleRemover
                     continue;
                 }
 
-                $source = $this->withoutComments($plan['edits'][$file->getPathname()]['content'] ?? $file->getContents());
+                $source = $this->withoutComments($plan['edits'][$path]['content'] ?? $file->getContents());
 
                 foreach ($patterns as $pattern) {
                     if (preg_match($pattern, $source)) {
-                        $found[] = $this->relative($file->getPathname());
+                        $found[] = $path;
 
                         break;
                     }
@@ -601,7 +784,7 @@ class ModuleRemover
     protected function filesIn(string $path): array
     {
         if ($this->files->isDirectory($path)) {
-            return array_map(fn ($file): string => $file->getPathname(), $this->files->allFiles($path));
+            return array_map(fn ($file): string => $this->normalise($file->getPathname()), $this->files->allFiles($path));
         }
 
         return $this->files->exists($path) ? [$path] : [];

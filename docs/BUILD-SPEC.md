@@ -270,7 +270,8 @@ Any change must keep all of these true. Each is enforced where noted.
 | I17 | Edits to existing files only append (a relation method, an import, a seeder line) and are syntax-checked before writing | `ModuleFiles`, `ModuleBuilder::assertValidPhp()` |
 | I18 | Generated factories never create `User` records (real, loginable accounts) — they pick an existing user | `ModuleFiles::factory()` |
 | I19 | User, Role, Permission (+ `builder.protected_models`) are never listed or deleted | `ModuleRemover::protectedModels()` |
-| I20 | A module is deleted only when nothing else depends on it (no FK from other tables, no blocking relation, no remaining code reference, no shared migration) | `ModuleRemover::inspect()` blockers |
+| I20 | A module is deleted only when nothing else depends on it. Dependencies owned by other deletable modules are *dependents* (deleted first via `deleteWithDependents()`); anything else (protected model, unowned code, shared migration) is a *blocker* | `ModuleRemover::inspect()`, `dependency()`, `group()` |
+| I23 | Paths in plans/edits/backups are normalised to forward slashes, so comparisons and array keys work on Windows | `ModuleRemover::normalise()` |
 | I21 | Delete is all-or-nothing and backed up first (unless `trash_days = 0`); restore refuses on conflicts (file exists again / edited file changed since / table exists / parent table missing) | `ModuleRemover::delete()`, `ModuleTrash::conflicts()` |
 | I22 | Trash ids are validated (`Ymd_His_v_Name`) before any filesystem access | `ModuleTrash::validId()` |
 
@@ -488,6 +489,8 @@ Works on **any** resource registered in the admin panel — builder-made or hand
 | DB | Foreign keys from other tables → blocker; table dropped; migration rows removed |
 | Permissions | `{prefix}.*` deleted (Spatie removes role/user assignments) |
 
-`deleteAll()` repeatedly deletes modules with no blockers (dependents first). Inside one request deleted classes stay loaded, so modules whose files are gone are skipped.
+Dependency classification (`dependency()`): FK from another table, a blocking relation in another model, or a leftover reference in a file — if the owner (via `index()`: tables + owned paths of every deletable module) is a deletable module it becomes a **dependent**, otherwise a **blocker**. Status: Ready / Has dependents / Blocked.
+
+`group($model)` = the module + all dependents (recursive) and their blockers. `deleteWithDependents()` and `deleteAll()` both use `deleteInOrder()`: repeatedly delete members with no blockers and no dependents. Inside one request deleted classes stay loaded, so modules whose files are gone are skipped.
 
 Trash entry (`storage/app/filalaunch/trash/{Ymd_His_v}_{Model}/`): `manifest.json`, `files/` (deleted files), `originals/` (edited files before edit, with the post-delete sha1 in the manifest), `data.ndjson.gz` (rows), permission snapshot (roles + user ids). Restore = conflict check → copy files back → restore originals → `migrate --path` → insert rows in chunks → recreate permissions/assignments → refresh caches → remove entry. `prune()` runs on Modules page load and after each delete.

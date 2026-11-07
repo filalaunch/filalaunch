@@ -93,7 +93,7 @@ Generate a complete CRUD module from a form or one command — **migration, mode
 ### Modules page (`Developer` menu, Super Admin only)
 
 - Lists **every resource** — builder-made or hand-written — except Users, Roles and Permissions
-- **Delete** a module completely: resource, model, factory, seeder, policy, migrations, relationship methods in other models, `DatabaseSeeder` line, table and permissions
+- **Delete** a module completely: resource, model, factory, seeder, policy, migrations, relationship methods in other models, `DatabaseSeeder` line, table and permissions — dependent modules can be deleted with it in one click
 - **Delete all** in one go (dependents first)
 - **Trash with one-click restore** — files, edits, table rows and permission assignments; auto-cleaned after 7 days
 
@@ -395,7 +395,9 @@ Click **Delete** to see exactly what will be removed, then confirm:
 
 ### Safety
 
-- **Blocked when something depends on it** — e.g. *Category* can't be deleted while *Post* belongs to it (foreign key, `belongsTo`, or any other code still using the class). Delete the dependent first, or use **Delete all**.
+- **Relationships are handled for you** — `posts()` added to `User`, `Category` or any other model is removed automatically.
+- **Dependents are deleted together** — if *Post* belongs to *Category*, the status shows **Has dependents** and deleting Category offers **Delete Category + 1 dependent** (Post is removed first). The preview lists every module and file.
+- **Blocked only when it isn't safe** — e.g. a protected model (User) or other hand-written code outside a module still uses the class. The popup says exactly which file.
 - Migrations that also change other tables are never deleted — the module is blocked until you split them.
 - All-or-nothing: if any step fails, every file is put back.
 

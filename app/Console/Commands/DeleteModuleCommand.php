@@ -67,42 +67,48 @@ class DeleteModuleCommand extends Command
             return self::FAILURE;
         }
 
-        $plan = $remover->inspect($module['model']);
+        $group = $remover->group($module['model']);
 
-        if ($plan['blockers'] !== []) {
-            $this->components->error("{$module['name']} can't be deleted yet:");
-            $this->components->bulletList($plan['blockers']);
+        if ($group['blockers'] !== []) {
+            $this->components->error("{$module['name']} can't be deleted automatically:");
+            $this->components->bulletList($group['blockers']);
 
             return self::FAILURE;
         }
 
-        $this->components->warn("Deleting {$module['name']} will:");
-        $this->components->bulletList($remover->describe($plan));
-
-        foreach ($plan['warnings'] as $warning) {
-            $this->components->warn($warning);
+        if (count($group['models']) > 1) {
+            $this->components->warn(implode(', ', array_map('class_basename', array_slice($group['models'], 1)))." depend on {$module['name']} and will be deleted first.");
         }
 
-        if (! $this->confirmed("Delete {$module['name']}?")) {
+        foreach (array_reverse($group['models']) as $member) {
+            $plan = $remover->inspect($member);
+            $this->components->warn("Deleting {$plan['name']} will:");
+            $this->components->bulletList($remover->describe($plan));
+
+            foreach ($plan['warnings'] as $warning) {
+                $this->components->warn($warning);
+            }
+        }
+
+        $question = count($group['models']) > 1
+            ? "Delete {$module['name']} and its ".(count($group['models']) - 1).' dependent(s)?'
+            : "Delete {$module['name']}?";
+
+        if (! $this->confirmed($question)) {
             return self::FAILURE;
         }
 
         try {
-            $result = $remover->delete($module['model']);
+            $deleted = $remover->deleteWithDependents($module['model']);
         } catch (ModuleBuilderException $e) {
-            $this->components->error('Nothing was deleted:');
+            $this->components->error('Stopped:');
             $this->components->bulletList($e->errors);
 
             return self::FAILURE;
         }
 
-        $this->components->info("Module {$module['name']} deleted.");
-
-        foreach ($result['warnings'] as $warning) {
-            $this->components->warn($warning);
-        }
-
-        $this->trashHint($result['trash']);
+        $this->components->info('Deleted: '.implode(', ', $deleted).'.');
+        $this->trashHint(ModuleTrash::days() > 0 ? 'all' : null);
 
         return self::SUCCESS;
     }
