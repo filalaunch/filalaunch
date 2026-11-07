@@ -1,0 +1,18 @@
+# FilaLaunch — AI assistant guide
+
+Laravel 12 + FilamentPHP 4 SaaS starter kit. Admin panel at `/admin`, Spatie Permission, policy-based authorization.
+
+**Read the full build spec before making changes:**
+
+@docs/BUILD-SPEC.md
+
+## Quick rules
+
+- Surgical changes only — touch what the task needs, keep existing patterns.
+- Authorization = Laravel policies calling `$user->can('{resource}.{ability}')`. No Filament Shield, no role-name checks in resources.
+- Never call `env()` outside `config/`. Role names come from `config('filalaunch.roles.*')`.
+- Use Filament v4 APIs (`Filament\Schemas\Components`, `Filament\Actions`, `Heroicon` enum).
+- After adding a resource: `php artisan filalaunch:sync-permissions --policies`.
+- Keep the invariants in BUILD-SPEC §7 true.
+- Verify with `php artisan migrate:fresh --seed` and `vendor/bin/pint`.
+- Update `docs/BUILD-SPEC.md` when architecture, conventions or features change.
