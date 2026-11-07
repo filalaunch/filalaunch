@@ -39,6 +39,7 @@
 - [First login](#first-login)
 - [Roles & permissions](#roles--permissions)
 - [Adding your own resources](#adding-your-own-resources)
+- [Queues](#queues)
 - [Configuration](#configuration)
 - [Useful commands](#useful-commands)
 - [Project structure](#project-structure)
@@ -58,7 +59,7 @@ Everything below works out of the box after `migrate --seed`.
 |---|---|
 | Login | Email + password, rate-limited |
 | Registration | Open sign-up; new users get the default `user` role automatically |
-| Email verification | Required before entering the panel (signed link, queued email) |
+| Email verification | Required before entering the panel (signed link) |
 | Password reset | Request link by email, set a new password |
 | Profile page | Update name, email and password inside the panel |
 | Two-factor auth (2FA) | Optional, per user. Authenticator app (Google Authenticator, 1Password, Authy…) with recovery codes |
@@ -134,11 +135,11 @@ SUPERADMIN_PASSWORD=choose-a-strong-password
 # 6. Create tables, roles, permissions and the Super Admin
 php artisan migrate --seed
 
-# 7. Run the app (server + queue worker + log viewer + Vite)
-composer dev
+# 7. Run the app
+php artisan serve
 ```
 
-> No Node.js? Run `php artisan serve` and `php artisan queue:work` in two terminals instead of `composer dev`.
+> Have Node.js? `composer dev` runs the server, a queue worker, a log tail (Pail) and Vite together.
 
 Open **http://127.0.0.1:8000/admin** and sign in with the Super Admin credentials from step 5.
 
@@ -164,13 +165,54 @@ Drops every table and re-seeds roles, permissions and the Super Admin.
 
 ### Emails in local development
 
-The default mail driver is `log`. Verification and password-reset emails are **queued**, so a queue worker must be running (`composer dev` starts one). Emails appear in:
+The default mail driver is `log`, so verification and password-reset emails are written to:
 
 ```
 storage/logs/laravel.log
 ```
 
 To send real emails, set `MAIL_MAILER` and the related `MAIL_*` values in `.env`.
+
+---
+
+## Queues
+
+Verification and password-reset emails are queued notifications. FilaLaunch ships with `QUEUE_CONNECTION=sync`, which runs them **immediately inside the request** — no worker needed, works on any host including shared hosting.
+
+| Setup | `.env` | Worker | Best for |
+|---|---|---|---|
+| **Sync** *(default)* | `QUEUE_CONNECTION=sync` | none | Local dev, shared hosting, low traffic |
+| **Database + cron** | `QUEUE_CONNECTION=database` | cron job, every minute | Shared hosting with cron (cPanel, Hostinger…) |
+| **Database / Redis + Supervisor** | `QUEUE_CONNECTION=database` or `redis` | always-on process | VPS (Forge, Ploi, plain Ubuntu), heavier jobs |
+
+> With `sync`, a request that sends an email waits for the mail server (usually 1–2 s), and a mail failure shows an error instead of retrying later. Switch to a real queue when that matters.
+
+### Shared hosting with cron
+
+Set `QUEUE_CONNECTION=database`, then add this cron job (replace the path):
+
+```
+* * * * * cd /home/username/filalaunch && php artisan queue:work --stop-when-empty --max-time=50 >> /dev/null 2>&1
+```
+
+Every minute it sends whatever is waiting and exits. Emails arrive within about a minute; failed jobs are retried.
+
+### VPS with Supervisor
+
+Set `QUEUE_CONNECTION=database` (or `redis`) and keep a worker running with Supervisor:
+
+```ini
+[program:filalaunch-worker]
+command=php /var/www/filalaunch/artisan queue:work --sleep=3 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+user=www-data
+numprocs=1
+stopwaitsecs=3600
+stdout_logfile=/var/www/filalaunch/storage/logs/worker.log
+```
+
+After each deploy, run `php artisan queue:restart` so workers pick up new code.
 
 ---
 
@@ -286,7 +328,8 @@ Then run `php artisan migrate --seed`.
 | `php artisan filalaunch:sync-permissions` | Create missing permissions for all resources |
 | `php artisan filalaunch:sync-permissions --policies` | Same + generate missing policy classes |
 | `php artisan permission:cache-reset` | Clear Spatie's permission cache |
-| `php artisan queue:work` | Process queued emails |
+| `php artisan queue:work` | Process queued jobs (only when `QUEUE_CONNECTION` isn't `sync`) |
+| `php artisan queue:restart` | Restart workers after a deploy |
 | `vendor/bin/pint` | Format code (Laravel Pint) |
 
 ---

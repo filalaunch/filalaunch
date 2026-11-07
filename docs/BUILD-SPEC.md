@@ -38,7 +38,8 @@ FilaLaunch gives SaaS founders a working business-operations layer on Laravel + 
 | Roles/permissions | spatie/laravel-permission | ^8.5 |
 | 2FA | Filament built-in app authentication (pragmarx/google2fa) | bundled with Filament |
 | Database | SQLite (default) — MySQL/PostgreSQL supported | — |
-| Queue / cache / session | `database` driver | — |
+| Queue | `sync` by default (no worker needed); `database`/`redis` + worker optional | — |
+| Cache / session | `database` driver | — |
 | Mail (dev) | `log` driver | — |
 | Code style | Laravel Pint (default preset) | — |
 
@@ -130,7 +131,7 @@ Configured in `AdminPanelProvider`:
 |---|---|
 | Panel access | `User::canAccessPanel()` returns `true` for panel `admin`. Every **registered** user may enter; verification is enforced by the panel; all content is gated by policies. |
 | Registration | `Register::handleRegistration()` calls parent, then `assignRole(config('filalaunch.roles.default'))`. Runs in Filament's DB transaction. |
-| Email verification | `User implements MustVerifyEmail`. Filament sends `Filament\Auth\Notifications\VerifyEmail` — **queued**, needs a worker. |
+| Email verification | `User implements MustVerifyEmail`. Filament sends `Filament\Auth\Notifications\VerifyEmail` (a queued notification). With the default `QUEUE_CONNECTION=sync` it is sent immediately; with `database`/`redis` a worker (or cron `queue:work --stop-when-empty`) is required. New features must keep working under `sync` — never assume a worker exists. |
 | 2FA storage | `users.app_authentication_secret` (text, `encrypted` cast) and `users.app_authentication_recovery_codes` (text, `encrypted:array` cast). Casts + `hidden` come from Filament traits `InteractsWithAppAuthentication` and `InteractsWithAppAuthenticationRecovery`. |
 | 2FA helper | `User::hasAppAuthenticationEnabled()` → `filled(app_authentication_secret)` |
 | 2FA reset by admin | `ResetTwoFactorAction` sets both values to `null` via `saveAppAuthentication*()` |
@@ -343,3 +344,4 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2026-11-07 | `filalaunch:sync-permissions` generates permissions (and optionally policies) for new resources |
 | 2026-11-07 | Dev phase: existing migrations may be edited |
 | 2026-11-07 | Panel color stays Amber for now |
+| 2026-11-07 | Default `QUEUE_CONNECTION=sync` so the kit runs on shared hosting without a worker; README documents cron and Supervisor setups |
