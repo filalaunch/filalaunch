@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Models\User;
+use App\Support\Billing\ModuleAccess;
 use App\Support\Permissions\PermissionSync;
 
 /**
@@ -19,6 +20,6 @@ class DefaultPolicy extends ResourcePolicy
     {
         $model = is_object($subject) ? $subject::class : $subject;
 
-        return is_string($model) && $user->can(PermissionSync::permissionFor($model, $ability));
+        return is_string($model) && app(ModuleAccess::class)->allows($user, PermissionSync::permissionFor($model, $ability));
     }
 }

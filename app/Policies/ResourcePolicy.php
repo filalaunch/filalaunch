@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Models\User;
+use App\Support\Billing\ModuleAccess;
 use App\Support\Permissions\PermissionSync;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
@@ -137,9 +138,12 @@ abstract class ResourcePolicy
         return $user instanceof User && $this->allows($user, $method);
     }
 
+    /**
+     * Permission check through the module's access mode (role/permission, plan, or either).
+     */
     protected function allows(User $user, string $ability): bool
     {
-        return $user->can(PermissionSync::permissionFor($this->modelClass(), $ability));
+        return app(ModuleAccess::class)->allows($user, PermissionSync::permissionFor($this->modelClass(), $ability));
     }
 
     /**

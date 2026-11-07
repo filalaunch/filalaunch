@@ -41,6 +41,7 @@
 - [Adding your own resources](#adding-your-own-resources)
 - [Module Builder](#module-builder)
 - [Deleting modules](#deleting-modules)
+- [Plans & billing](#plans--billing)
 - [Queues](#queues)
 - [Configuration](#configuration)
 - [Useful commands](#useful-commands)
@@ -96,6 +97,15 @@ Generate a complete CRUD module from a form or one command — **migration, mode
 - **Delete** a module completely: resource, model, factory, seeder, policy, migrations, relationship methods in other models, `DatabaseSeeder` line, table and permissions — dependent modules can be deleted with it in one click
 - **Delete all** in one go (dependents first)
 - **Trash with one-click restore** — files, edits, table rows and permission assignments; auto-cleaned after 7 days
+
+### Plans & billing (`Billing` menu)
+
+- **Three plan types — use any mix:** one-time (lifetime or N days), subscription (any interval, free trial), usage-based (base price + metered usage). Switch off the types you don't need.
+- **Plans unlock modules** — tick module permissions on a plan, like a role the customer has while subscribed.
+- **Access rules per module:** role/permission (default), plan, or either — plan-based access is fully optional.
+- **Offline bank transfer** with required receipt upload and admin approve/reject; Stripe, PayPal, Razorpay, Cashfree, Kelviq and Polar.sh listed as *coming soon*.
+- **Usage meters** — `$user->recordUsage('api_calls')`, included quantities, block or overage at the limit.
+- **My plan** page for every user: current plans, usage bars, choose/renew/cancel, payment history.
 
 ### Built-in safety rules
 
@@ -425,6 +435,70 @@ php artisan filalaunch:module-trash empty
 
 ---
 
+## Plans & billing
+
+Everything lives under the **Billing** menu (Super Admin) and **My plan** in the user menu (every user).
+
+### Plan types — pick what your SaaS needs
+
+| Type | Settings | Example |
+|---|---|---|
+| **One-time** | Price, access period (empty = lifetime) | "Lifetime $199", "1-year pass $99" |
+| **Subscription** | Price, every *N* day/week/month/year, trial days | "Pro $19/month, 14-day trial" |
+| **Usage-based** | Optional base price + cycle, meters (included quantity, price per extra unit, block or allow overage) | "Pay as you go: 1,000 calls included, $0.01 per extra" |
+
+Not using a type? Untick it in **Billing → Billing settings → Plan types** — it disappears from the plan form and from customers. Users may hold several plans at once (e.g. a subscription plus a one-time add-on); access is the union.
+
+### What a plan unlocks — access rules
+
+On each plan, tick the module permissions it grants (the same checkboxes as Roles). Then choose per module in **Billing → Access rules**:
+
+| Mode | Access comes from |
+|---|---|
+| **Role / permission** *(default)* | Roles and direct permissions only — exactly as before |
+| **Plan** | Only an active plan that includes the permission |
+| **Role / permission or plan** | Either one |
+
+Kit modules (Users, Roles, Permissions, Billing) are always role/permission and can't be put on a plan. Super Admin always has access.
+
+### How customers pay (bank transfer)
+
+1. **Billing → Billing settings**: enable bank transfer and enter your bank details.
+2. The customer opens **My plan**, picks a plan:
+   - free plans and first-time trials start instantly, no payment;
+   - paid plans show the amount, your bank details and a unique reference (`FL-2026-7K3Q9X`); the customer enters the bank transaction reference and **uploads the receipt** (required).
+3. **Billing → Payments** (badge shows pending count): open the receipt, **Approve** → plan active, or **Reject** with a reason shown to the customer.
+4. **Renewal:** in the last 7 days of a period (or after it ends), **Renew** appears on My plan → same bank-transfer flow; approval extends from the current end date, so no days are lost. Access continues for `FILALAUNCH_GRACE_DAYS` (default 3) after a period ends.
+
+Online gateways (Stripe, PayPal, Razorpay, Cashfree, Kelviq, Polar.sh) are shown in Billing settings as *coming soon*.
+
+### Managing subscriptions
+
+**Billing → Subscriptions**: assign any plan to any user (dates fill from the plan), cancel (now or at period end), resume, extend one period, change plan, or edit dates directly.
+
+Subscription access is decided **by dates**, so no cron job is required. Optional tidy-up of status labels: `php artisan filalaunch:subscriptions:sync` (scheduled daily in `routes/console.php`).
+
+### Usage meters in your code
+
+```php
+if (! auth()->user()->recordUsage('api_calls')) {
+    abort(429, 'Monthly limit reached — upgrade your plan.');
+}
+
+$user->usageRemaining('api_calls'); // null = unlimited
+$user->canUse('api_calls', 10);
+$user->hasActivePlan('pro-monthly');
+$user->planAllows('posts.create');
+```
+
+Define meters under **Billing → Usage meters** (reset monthly, per billing cycle, or never) and attach them to usage-based plans.
+
+### Sample data
+
+`php artisan db:seed` creates **Free**, **Pro Monthly** (14-day trial), **Lifetime** and **Pay-as-you-go** (with an `api_calls` meter) — edit or deactivate them freely. Bank transfer is seeded **disabled** with placeholder details.
+
+---
+
 ## Configuration
 
 All FilaLaunch settings live in `config/filalaunch.php`.
@@ -436,6 +510,8 @@ All FilaLaunch settings live in `config/filalaunch.php`.
 | `SUPERADMIN_PASSWORD` | *(empty)* | Login password. The seeder skips the Super Admin if empty |
 | `FILALAUNCH_BUILDER_ENABLED` | `true` only when `APP_ENV=local` | Turns the Module Builder and Modules pages and commands on/off |
 | `FILALAUNCH_TRASH_DAYS` | `7` | Days deleted modules stay in the trash (`0` = no trash) |
+| `FILALAUNCH_CURRENCY` | `USD` | Currency for plans and payments |
+| `FILALAUNCH_GRACE_DAYS` | `3` | Days access continues after a period ends (time to renew) |
 
 | `config/filalaunch.php` key | Default | Purpose |
 |---|---|---|
@@ -478,6 +554,7 @@ Then run `php artisan migrate --seed`.
 | `php artisan filalaunch:make-module` | Generate a module (migration, model, factory, seeder, resource) |
 | `php artisan filalaunch:delete-module` | Delete a module (or `--all`), backed up to the trash |
 | `php artisan filalaunch:module-trash` | List / restore / purge deleted modules |
+| `php artisan filalaunch:subscriptions:sync` | Mark ended subscriptions as expired (labels only, optional) |
 | `php artisan permission:cache-reset` | Clear Spatie's permission cache |
 | `php artisan queue:work` | Process queued jobs (only when `QUEUE_CONNECTION` isn't `sync`) |
 | `php artisan queue:restart` | Restart workers after a deploy |
@@ -499,19 +576,26 @@ app/
 │   ├── Pages/Auth/Register.php                   # assigns default role on sign-up
 │   ├── Pages/ModuleBuilder.php                   # Module Builder page
 │   ├── Pages/Modules.php                         # Modules page (list, delete)
+│   ├── Pages/MyPlan.php                          # customer plan page (user menu)
+│   ├── Pages/AccessRules.php, BillingSettings.php
+│   ├── Resources/Plans, Subscriptions, Payments, Meters
 │   ├── Widgets/ModuleTrashWidget.php             # Trash list + restore (on Modules page)
 │   ├── Resources/
 │   │   ├── Users/        (Schemas/, Tables/, Pages/, Actions/)
 │   │   ├── Roles/        (Schemas/, Tables/, Pages/)
 │   │   └── Permissions/  (Schemas/, Tables/, Pages/)
 │   └── Support/PermissionCheckboxes.php          # grouped checkbox UI
-├── Models/                 User, Role, Permission
+├── Enums/                  PlanType, SubscriptionStatus, PaymentStatus, AccessMode…
+├── Models/                 User, Role, Permission, Plan, Subscription, Payment, Meter…
+│   └── Concerns/HasSubscriptions.php             # $user->planAllows(), recordUsage()…
 ├── Policies/               ResourcePolicy (base), DefaultPolicy (fallback),
 │                           UserPolicy, RolePolicy, PermissionPolicy
 ├── Providers/
 │   ├── AppServiceProvider.php                    # Super Admin gate + default policy
 │   └── Filament/AdminPanelProvider.php           # panel + auth features
 └── Support/
+    ├── Billing/                                  # Billing (lifecycle), ModuleAccess, Money
+    ├── Settings.php                              # settings stored in the database
     ├── ModuleBuilder/                            # Module Builder, remover, trash
     └── Permissions/PermissionSync.php            # permission generator
 config/filalaunch.php                             # kit settings
@@ -542,6 +626,8 @@ FilaLaunch is built in small, tested steps.
 - [x] **Step 2** — Automatic permissions for every resource + secure-by-default policies (no permission = no access)
 - [x] **Step 3** — Module Builder: generate migration, model, factory, seeder and resource from the panel or CLI
 - [x] **Step 4** — Modules page: delete any module completely, with trash and one-click restore
+- [x] **Step 5** — Plans & subscriptions: one-time, subscription and usage-based plans, plan-based access rules, bank transfer, usage meters, My plan
+- [ ] Online payment gateways (Stripe, PayPal, Razorpay, Cashfree, Kelviq, Polar.sh)
 - [ ] More modules — follow progress and release notes at **[filalaunch.com](https://filalaunch.com)**
 
 ---

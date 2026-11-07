@@ -2,8 +2,16 @@
 
 namespace App\Support\ModuleBuilder;
 
+use App\Models\Meter;
+use App\Models\ModuleAccessRule;
+use App\Models\Payment;
 use App\Models\Permission;
+use App\Models\Plan;
+use App\Models\PlanMeter;
 use App\Models\Role;
+use App\Models\Setting;
+use App\Models\Subscription;
+use App\Models\UsageRecord;
 use App\Models\User;
 use App\Support\ModuleBuilder\Concerns\RefreshesAppCaches;
 use App\Support\Permissions\PermissionSync;
@@ -54,6 +62,15 @@ class ModuleRemover
             User::class,
             Role::class,
             Permission::class,
+            // Billing (kit core)
+            Plan::class,
+            PlanMeter::class,
+            Meter::class,
+            Subscription::class,
+            Payment::class,
+            UsageRecord::class,
+            ModuleAccessRule::class,
+            Setting::class,
             ...config('filalaunch.builder.protected_models', []),
         ]));
     }

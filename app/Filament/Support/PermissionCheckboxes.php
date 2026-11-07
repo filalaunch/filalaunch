@@ -24,12 +24,17 @@ class PermissionCheckboxes
     /**
      * @return array<Component>
      */
-    public static function make(bool|Closure $disabled = false): array
+    /**
+     * @param  list<string>  $exceptGroups  permission prefixes to leave out (e.g. kit modules on plans)
+     */
+    public static function make(bool|Closure $disabled = false, array $exceptGroups = []): array
     {
         $groups = Permission::query()
             ->orderBy('name')
             ->get()
-            ->groupBy(fn (Permission $permission): string => $permission->getGroup());
+            ->toBase()
+            ->groupBy(fn (Permission $permission): string => $permission->getGroup())
+            ->except($exceptGroups);
 
         if ($groups->isEmpty()) {
             return [

@@ -8,7 +8,7 @@
 |---|---|
 | Product | FilaLaunch — SaaS starter kit · [filalaunch.com](https://filalaunch.com) |
 | Repository | `github.com/filalaunch/filalaunch` (MIT) |
-| Spec version | 1.3 — Step 4 complete (Modules page: delete, trash, restore) |
+| Spec version | 1.4 — Step 5 complete (Plans & subscriptions) |
 | Last updated | 2026-11-07 |
 
 ---
@@ -60,6 +60,9 @@ app/
 │   ├── Pages/ModuleBuilder.php                   Module Builder page (Super Admin + builder enabled)
 │   ├── Pages/Modules.php                         Modules page: list, delete, delete all (custom-data table)
 │   ├── Widgets/ModuleTrashWidget.php             Trash list + restore; $isDiscovered = false (not on dashboard)
+│   ├── Pages/MyPlan.php (+ resources/views/filament/pages/my-plan.blade.php)  customer plan page
+│   ├── Pages/AccessRules.php, Pages/BillingSettings.php
+│   ├── Resources/Plans, Subscriptions (Actions/SubscriptionActions), Payments (index only), Meters (simple)
 │   ├── Resources/{Plural}/                       one folder per resource (Filament v4 layout)
 │   │   ├── {Model}Resource.php
 │   │   ├── Schemas/{Model}Form.php
@@ -67,8 +70,12 @@ app/
 │   │   ├── Pages/List…, Create…, Edit…
 │   │   └── Actions/ (optional, reusable actions)
 │   └── Support/PermissionCheckboxes.php          grouped permission CheckboxLists
+├── Enums/                PlanType, BillingInterval, SubscriptionStatus, PaymentStatus, PaymentKind, AccessMode, MeterReset, LimitBehavior (Filament HasLabel/HasColor)
+├── Http/Controllers/Billing/PaymentReceiptController.php   private receipt download
 ├── Models/
-│   ├── User.php          HasRoles, MustVerifyEmail, FilamentUser, 2FA contracts
+│   ├── User.php          HasRoles, HasSubscriptions, MustVerifyEmail, FilamentUser, 2FA contracts
+│   ├── Plan, PlanMeter, Meter, Subscription, Payment, UsageRecord, ModuleAccessRule, Setting
+│   ├── Concerns/HasSubscriptions.php   planAllows(), activePlans(), recordUsage(), canUse(), usageSummary()
 │   ├── Role.php          extends Spatie Role (+ protectedNames(), isProtected(), isSuperAdmin())
 │   └── Permission.php    extends Spatie Permission (+ getGroup())
 ├── Policies/
@@ -79,6 +86,11 @@ app/
 │   ├── AppServiceProvider.php            Gate::after Super Admin rule
 │   └── Filament/AdminPanelProvider.php   panel id "admin", path "/admin", auth features
 └── Support/
+    ├── Settings.php           DB key/value settings (secret fields encrypted)
+    ├── Billing/
+    │   ├── Billing.php        lifecycle: start, bank transfer, approve/reject, cancel/resume/extend/change, settings, gateways list
+    │   ├── ModuleAccess.php   access mode per module; the single allow/deny decision
+    │   └── Money.php          minor-unit formatting
     ├── ModuleBuilder/
     │   ├── ModuleDefinition.php   normalised input + validation + naming rules
     │   ├── ModuleFiles.php        renders stubs; safe edits to existing files
@@ -112,6 +124,8 @@ art/                             logo assets (README)
 | `SUPERADMIN_PASSWORD` | yes, to seed Super Admin | `SuperAdminSeeder` |
 | `FILALAUNCH_BUILDER_ENABLED` | no (default `true` only when `APP_ENV=local`) | `config('filalaunch.builder.enabled')` → Module Builder + Modules |
 | `FILALAUNCH_TRASH_DAYS` | no (default `7`, `0` = no trash) | `config('filalaunch.builder.trash_days')` → ModuleTrash |
+| `FILALAUNCH_CURRENCY` | no (default `USD`) | `Billing::currency()` |
+| `FILALAUNCH_GRACE_DAYS` | no (default `3`) | `Billing::graceDays()` |
 
 **Rule:** never call `env()` outside `config/*.php`. Read values with `config('filalaunch.…')` (config caching breaks `env()` elsewhere).
 
@@ -272,6 +286,12 @@ Any change must keep all of these true. Each is enforced where noted.
 | I19 | User, Role, Permission (+ `builder.protected_models`) are never listed or deleted | `ModuleRemover::protectedModels()` |
 | I20 | A module is deleted only when nothing else depends on it. Dependencies owned by other deletable modules are *dependents* (deleted first via `deleteWithDependents()`); anything else (protected model, unowned code, shared migration) is a *blocker* | `ModuleRemover::inspect()`, `dependency()`, `group()` |
 | I23 | Paths in plans/edits/backups are normalised to forward slashes, so comparisons and array keys work on Windows | `ModuleRemover::normalise()` |
+| I24 | Every policy check goes through `ModuleAccess::allows()` (access mode per module); Super Admin always passes; kit prefixes are always "permission" | `ResourcePolicy::allows()`, `DefaultPolicy::before()`, `ModuleAccess` |
+| I25 | Plans can never grant kit permissions (users, roles, permissions, billing…) | `PermissionCheckboxes::make(exceptGroups: ModuleAccess::kitPrefixes())` |
+| I26 | Subscription access is decided by dates; `pending` and `expired` never grant access; canceled keeps access until `ends_at` (no grace) | `Subscription::scopeActive()`, `isActive()` |
+| I27 | All subscription/payment state changes go through `Billing` (one code path for admin, My plan and future gateways) | `App\Support\Billing\Billing` |
+| I28 | Bank-transfer receipts are private files; only the owner or staff with `payments.view` can open them | `PaymentReceiptController` |
+| I29 | Billing models are protected kit models (never listed/deleted on the Modules page); module delete/restore also removes/restores plan permission links | `ModuleRemover::protectedModels()`, `ModuleTrash` snapshot |
 | I21 | Delete is all-or-nothing and backed up first (unless `trash_days = 0`); restore refuses on conflicts (file exists again / edited file changed since / table exists / parent table missing) | `ModuleRemover::delete()`, `ModuleTrash::conflicts()` |
 | I22 | Trash ids are validated (`Ymd_His_v_Name`) before any filesystem access | `ModuleTrash::validId()` |
 
@@ -381,6 +401,7 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2 | Default-deny `DefaultPolicy` + `ResourcePolicy` base + strict authorization | ✅ |
 | 3 | Module Builder page + `filalaunch:make-module` (migration, model, factory, seeder, policy, resource, soft deletes, belongs-to + has one/has many) | ✅ |
 | 4 | Modules page + `filalaunch:delete-module` / `filalaunch:module-trash`: delete any resource by convention, trash with restore, auto-prune | ✅ |
+| 5 | Plans (one-time / subscription / usage), subscriptions, access rules, bank transfer + receipts, usage meters, My plan, billing settings (gateways coming soon) | ✅ |
 | — | Next modules | to be defined (see filalaunch.com) |
 
 ---
@@ -425,6 +446,7 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2026-11-07 | Every model guarded by default: `DefaultPolicy` fallback via `Gate::guessPolicyNamesUsing`; custom policies extend `ResourcePolicy` and hold only safety rules; panel uses `strictAuthorization()` |
 | 2026-11-07 | Module Builder: one engine for page + CLI; Filament's `make:filament-resource --generate` builds the resource from the new table; local-only by default, `FILALAUNCH_BUILDER_ENABLED` for other environments; inverse relations and seeder registration edit existing files by appending only |
 | 2026-11-07 | Module delete works by convention on any resource (no generation manifest); User/Role/Permission protected; dependency + leftover-reference blockers; trash in `storage/app/filalaunch/trash` (gzip rows), 7-day auto-prune, UI restore; test modules are made in a separate clone, not the kit repo |
+| 2026-11-08 | Billing: 3 plan types, each switchable in settings; plans grant permissions; per-module access mode (permission / plan / either); several active plans per user; offline bank transfer only (receipt required, admin approval, manual renewal); gateways listed as coming soon; USD from config; prices in minor units |
 | 2026-11-07 | Default `QUEUE_CONNECTION=sync` so the kit runs on shared hosting without a worker; README documents cron and Supervisor setups |
 
 ---
@@ -494,3 +516,44 @@ Dependency classification (`dependency()`): FK from another table, a blocking re
 `group($model)` = the module + all dependents (recursive) and their blockers. `deleteWithDependents()` and `deleteAll()` both use `deleteInOrder()`: repeatedly delete members with no blockers and no dependents. Inside one request deleted classes stay loaded, so modules whose files are gone are skipped.
 
 Trash entry (`storage/app/filalaunch/trash/{Ymd_His_v}_{Model}/`): `manifest.json`, `files/` (deleted files), `originals/` (edited files before edit, with the post-delete sha1 in the manifest), `data.ndjson.gz` (rows), permission snapshot (roles + user ids). Restore = conflict check → copy files back → restore originals → `migrate --path` → insert rows in chunks → recreate permissions/assignments → refresh caches → remove entry. `prune()` runs on Modules page load and after each delete.
+
+---
+
+## 15. Plans & billing
+
+### 15.1 Data
+
+| Table | Notes |
+|---|---|
+| `plans` | `type` (one_time / subscription / usage), `price` (minor units), `currency`, `interval` + `interval_count`, `trial_days`, `access_days` (one-time; null = lifetime), `features` (json), `is_active`, `is_featured`, `sort` |
+| `plan_permission` | plan ↔ Spatie permission (cascade both ways) |
+| `meters`, `plan_meters` | meter `key` (used in code), `reset` (monthly / cycle / never); per plan: `included` (null = unlimited), `unit_price`, `on_limit` (block / overage) |
+| `subscriptions` | `status` (pending / trialing / active / canceled / expired), `starts_at`, `trial_ends_at`, `period_starts_at`, `ends_at` (null = no end), `canceled_at`, `gateway`, `gateway_id` |
+| `payments` | `reference` (unique), `kind` (new / renewal), `amount`, `currency`, `method`, `status`, `transaction_id`, `proof_path` (private), `note`, `review_note`, `reviewed_by/at` |
+| `usage_records` | user, meter, subscription, quantity, recorded_at |
+| `module_access_rules` | `prefix` → `mode`; no row = permission |
+| `settings` | `billing.plan_types`, `billing.bank_transfer` (gateway keys later; secret fields encrypted) |
+
+### 15.2 Lifecycle (`Billing`)
+
+| Event | Result |
+|---|---|
+| Free plan / first trial | `startWithoutPayment()` → active (no end) / trialing (ends at trial end) |
+| Bank transfer, new | `submitBankTransfer()` → subscription `pending` + payment `pending` |
+| Approve, new | active; `period_starts_at = now`, `ends_at = plan->periodEnd(now)` |
+| Approve, renewal | `base = ends_at` if future else now; `ends_at = periodEnd(base)` |
+| Reject, new | payment rejected (reason shown); pending subscription → canceled |
+| Cancel | now: `ends_at = now`; at period end: keep `ends_at` |
+| Resume / extend / change plan | admin actions on Subscriptions |
+
+`Plan::hasPeriod()`: subscription → yes; one-time → when `access_days` set; usage → when base price > 0 and interval set. Free plans never expire. Renewal allowed within 7 days of `ends_at` or after it, when no payment is pending.
+
+### 15.3 Access
+
+`ModuleAccess::allows($user, 'posts.update')` → Super Admin ✓ → mode of `posts`: permission → `$user->can()`; plan → `$user->planAllows()`; either → both OR'ed. `planAllows` reads permission names of all active subscriptions' plans (memoised per request on the user model).
+
+### 15.4 Extending
+
+- New gateway: implement checkout + webhook that call `Billing` (create payment with `method = <gateway>`, then `approve()`), store keys via `Settings::setGroup('billing.gateways.<key>', $values, $secretFields)`, enable its card in `BillingSettings`.
+- New plan type: add a `PlanType` case, handle it in `Plan::hasPeriod()`, `periodEnd()`, `priceLabel()` and `PlanForm` visibility closures.
+- Currency settings screen: replace `Billing::currency()` with a setting (plans store their own `currency` already).

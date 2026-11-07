@@ -367,7 +367,7 @@ class ModuleTrash
 
     /**
      * @param  list<string>  $names
-     * @return list<array{name: string, roles: list<string>, users: list<int|string>}>
+     * @return list<array{name: string, roles: list<string>, users: list<int|string>, plans: list<int>}>
      */
     protected function permissionSnapshot(array $names): array
     {
@@ -381,6 +381,7 @@ class ModuleTrash
                 'name' => $permission->name,
                 'roles' => $permission->roles->pluck('name')->all(),
                 'users' => DB::table($pivot)->where('permission_id', $permission->id)->where('model_type', $morph)->pluck($key)->all(),
+                'plans' => Schema::hasTable('plan_permission') ? DB::table('plan_permission')->where('permission_id', $permission->id)->pluck('plan_id')->all() : [],
             ])
             ->all();
     }
@@ -401,6 +402,12 @@ class ModuleTrash
 
             foreach ($item['users'] as $userId) {
                 $userClass::query()->find($userId)?->givePermissionTo($permission);
+            }
+
+            foreach ($item['plans'] ?? [] as $planId) {
+                if (Schema::hasTable('plans') && DB::table('plans')->where('id', $planId)->exists()) {
+                    DB::table('plan_permission')->insertOrIgnore(['plan_id' => $planId, 'permission_id' => $permission->id]);
+                }
             }
         }
 

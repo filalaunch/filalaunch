@@ -53,6 +53,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Billing
+    |--------------------------------------------------------------------------
+    |
+    | Plans, subscriptions and payments. Prices are stored in the smallest unit
+    | (cents). Bank details, enabled plan types and gateways are managed in the
+    | admin panel (Billing → Billing settings). A currency settings screen comes later.
+    |
+    */
+
+    'billing' => [
+        'currency' => env('FILALAUNCH_CURRENCY', 'USD'),
+
+        // Days access continues after a subscription period ends (time to renew by bank transfer).
+        'grace_days' => (int) env('FILALAUNCH_GRACE_DAYS', 3),
+
+        // Payment references look like FL-2026-7K3Q9X.
+        'reference_prefix' => 'FL',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Module Builder
     |--------------------------------------------------------------------------
     |

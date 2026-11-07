@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use App\Models\User;
 use App\Policies\DefaultPolicy;
+use App\Support\Billing\ModuleAccess;
+use App\Support\Settings;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -16,7 +18,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Per-request caches (also safe under Octane).
+        $this->app->scoped(Settings::class);
+        $this->app->scoped(ModuleAccess::class);
     }
 
     /**
