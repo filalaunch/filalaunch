@@ -2,6 +2,7 @@
 
 namespace App\Support\ModuleBuilder;
 
+use App\Support\ModuleBuilder\Concerns\RefreshesAppCaches;
 use App\Support\Permissions\PermissionSync;
 use Filament\Facades\Filament;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -24,6 +25,8 @@ use Throwable;
  */
 class ModuleBuilder
 {
+    use RefreshesAppCaches;
+
     /** @var list<string> */
     protected array $created = [];
 
@@ -329,37 +332,7 @@ class ModuleBuilder
      */
     protected function refreshCaches(): array
     {
-        $warnings = [];
-
-        // Cached Filament components would hide the new resource.
-        if ($this->files->isDirectory(base_path('bootstrap/cache/filament'))) {
-            rescue(fn () => Artisan::call('filament:clear-cached-components'), report: false);
-        }
-
-        // Cached routes don't contain the new resource's pages — rebuild them (fresh app, so the new resource is discovered).
-        if (app()->routesAreCached()) {
-            try {
-                Artisan::call('route:cache');
-            } catch (Throwable) {
-                rescue(fn () => Artisan::call('route:clear'), report: false);
-                $warnings[] = 'Route cache was cleared. Run `php artisan route:cache` again after deploying.';
-            }
-        }
-
-        foreach ($this->created as $path) {
-            if ($this->files->isFile($path)) {
-                $this->invalidateOpcache($path);
-            }
-        }
-
-        return $warnings;
-    }
-
-    protected function invalidateOpcache(string $path): void
-    {
-        if (function_exists('opcache_invalidate')) {
-            @opcache_invalidate($path, true);
-        }
+        return $this->refreshAppCaches(array_filter($this->created, fn (string $path): bool => $this->files->isFile($path)));
     }
 
     protected function resourceUrl(string $resourceClass): ?string

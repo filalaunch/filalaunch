@@ -40,6 +40,7 @@
 - [Roles & permissions](#roles--permissions)
 - [Adding your own resources](#adding-your-own-resources)
 - [Module Builder](#module-builder)
+- [Deleting modules](#deleting-modules)
 - [Queues](#queues)
 - [Configuration](#configuration)
 - [Useful commands](#useful-commands)
@@ -88,6 +89,13 @@ Generate a complete CRUD module from a form or one command — **migration, mode
 - Choose the **menu icon, navigation group and sort order** for the new resource
 - Preview before generating; automatic rollback if anything fails; the panel reloads so the new menu item appears instantly
 - Works in production too when enabled (rebuilds route cache, clears component cache)
+
+### Modules page (`Developer` menu, Super Admin only)
+
+- Lists **every resource** — builder-made or hand-written — except Users, Roles and Permissions
+- **Delete** a module completely: resource, model, factory, seeder, policy, migrations, relationship methods in other models, `DatabaseSeeder` line, table and permissions
+- **Delete all** in one go (dependents first)
+- **Trash with one-click restore** — files, edits, table rows and permission assignments; auto-cleaned after 7 days
 
 ### Built-in safety rules
 
@@ -367,6 +375,54 @@ It works with `php artisan optimize` caches on — after generating, it rebuilds
 
 ---
 
+## Deleting modules
+
+**Developer → Modules** lists every resource in the panel (builder-made or hand-written). Users, Roles and Permissions are protected and never listed.
+
+Click **Delete** to see exactly what will be removed, then confirm:
+
+| Removed | Example (`Post`) |
+|---|---|
+| Resource folder | `app/Filament/Resources/Posts/` |
+| Model, factory, seeder, policy | `app/Models/Post.php`, `PostFactory`, `PostSeeder`, `PostPolicy` |
+| Migrations for its table | `…_create_posts_table.php` |
+| Relationship methods in other models | `posts()` in `Category.php` and `User.php` (+ unused imports) |
+| Seeder registration | `PostSeeder::class` in `DatabaseSeeder` |
+| Table + migration record | `posts` |
+| Permissions + their role/user assignments | `posts.*` |
+
+**Delete all** (type `DELETE ALL` to confirm) removes every listed module, dependents first.
+
+### Safety
+
+- **Blocked when something depends on it** — e.g. *Category* can't be deleted while *Post* belongs to it (foreign key, `belongsTo`, or any other code still using the class). Delete the dependent first, or use **Delete all**.
+- Migrations that also change other tables are never deleted — the module is blocked until you split them.
+- All-or-nothing: if any step fails, every file is put back.
+
+### Trash & restore
+
+Each deleted module is backed up to `storage/app/filalaunch/trash/` (not committed): files, the original versions of edited files, table rows (gzip) and permission assignments.
+
+- **Restore** from the Trash list under the Modules page — everything returns as it was. Restore parents before children (Category before Post); the page tells you if the order is wrong or a file changed since.
+- Backups are removed automatically after `FILALAUNCH_TRASH_DAYS` days (default 7). **Delete forever** / **Empty trash** free space immediately. `FILALAUNCH_TRASH_DAYS=0` disables the trash (deletes are permanent).
+
+### From the command line
+
+```bash
+php artisan filalaunch:delete-module Post            # preview + confirm
+php artisan filalaunch:delete-module --all           # type DELETE ALL to confirm
+php artisan filalaunch:delete-module Post --force -n # no prompt (scripts)
+
+php artisan filalaunch:module-trash                  # list backups
+php artisan filalaunch:module-trash restore <id>
+php artisan filalaunch:module-trash purge <id>
+php artisan filalaunch:module-trash empty
+```
+
+> **Tip:** keep experiments out of your repository — test the Module Builder in a separate clone, and commit only the modules you want to ship.
+
+---
+
 ## Configuration
 
 All FilaLaunch settings live in `config/filalaunch.php`.
@@ -376,7 +432,8 @@ All FilaLaunch settings live in `config/filalaunch.php`.
 | `SUPERADMIN_NAME` | `Super Admin` | Name of the seeded Super Admin |
 | `SUPERADMIN_EMAIL` | *(empty)* | Login email. The seeder skips the Super Admin if empty |
 | `SUPERADMIN_PASSWORD` | *(empty)* | Login password. The seeder skips the Super Admin if empty |
-| `FILALAUNCH_BUILDER_ENABLED` | `true` only when `APP_ENV=local` | Turns the Module Builder page and command on/off |
+| `FILALAUNCH_BUILDER_ENABLED` | `true` only when `APP_ENV=local` | Turns the Module Builder and Modules pages and commands on/off |
+| `FILALAUNCH_TRASH_DAYS` | `7` | Days deleted modules stay in the trash (`0` = no trash) |
 
 | `config/filalaunch.php` key | Default | Purpose |
 |---|---|---|
@@ -385,7 +442,9 @@ All FilaLaunch settings live in `config/filalaunch.php`.
 | `roles.default` | `user` | Role given to self-registered users |
 | `permissions.abilities` | `view_any, view, create, update, delete` | Abilities generated per resource |
 | `permissions.soft_delete_abilities` | `restore, force_delete` | Added when the model uses `SoftDeletes` |
-| `builder.enabled` | from `FILALAUNCH_BUILDER_ENABLED` | Module Builder on/off |
+| `builder.enabled` | from `FILALAUNCH_BUILDER_ENABLED` | Module Builder / Modules on/off |
+| `builder.protected_models` | `[]` | Extra models the Modules page never lists or deletes (User, Role, Permission always protected) |
+| `builder.trash_days` | from `FILALAUNCH_TRASH_DAYS` | Trash retention |
 
 > The seeder never overwrites an existing Super Admin's password. To change it, use the Profile page or run `migrate:fresh --seed`.
 
@@ -415,6 +474,8 @@ Then run `php artisan migrate --seed`.
 | `php artisan filalaunch:sync-permissions` | Create missing permissions now (also happens automatically) |
 | `php artisan filalaunch:sync-permissions --policies` | Same + scaffold policy classes for adding extra rules |
 | `php artisan filalaunch:make-module` | Generate a module (migration, model, factory, seeder, resource) |
+| `php artisan filalaunch:delete-module` | Delete a module (or `--all`), backed up to the trash |
+| `php artisan filalaunch:module-trash` | List / restore / purge deleted modules |
 | `php artisan permission:cache-reset` | Clear Spatie's permission cache |
 | `php artisan queue:work` | Process queued jobs (only when `QUEUE_CONNECTION` isn't `sync`) |
 | `php artisan queue:restart` | Restart workers after a deploy |
@@ -428,11 +489,15 @@ Then run `php artisan migrate --seed`.
 app/
 ├── Console/Commands/
 │   ├── SyncPermissionsCommand.php                # filalaunch:sync-permissions
-│   └── MakeModuleCommand.php                     # filalaunch:make-module
+│   ├── MakeModuleCommand.php                     # filalaunch:make-module
+│   ├── DeleteModuleCommand.php                   # filalaunch:delete-module
+│   └── ModuleTrashCommand.php                    # filalaunch:module-trash
 ├── Filament/
 │   ├── Concerns/SyncsPermissionCheckboxes.php    # saves grouped permission checkboxes
 │   ├── Pages/Auth/Register.php                   # assigns default role on sign-up
 │   ├── Pages/ModuleBuilder.php                   # Module Builder page
+│   ├── Pages/Modules.php                         # Modules page (list, delete)
+│   ├── Widgets/ModuleTrashWidget.php             # Trash list + restore (on Modules page)
 │   ├── Resources/
 │   │   ├── Users/        (Schemas/, Tables/, Pages/, Actions/)
 │   │   ├── Roles/        (Schemas/, Tables/, Pages/)
@@ -445,7 +510,7 @@ app/
 │   ├── AppServiceProvider.php                    # Super Admin gate + default policy
 │   └── Filament/AdminPanelProvider.php           # panel + auth features
 └── Support/
-    ├── ModuleBuilder/                            # Module Builder engine
+    ├── ModuleBuilder/                            # Module Builder, remover, trash
     └── Permissions/PermissionSync.php            # permission generator
 config/filalaunch.php                             # kit settings
 database/seeders/                                 # roles, permissions, Super Admin
@@ -474,6 +539,7 @@ FilaLaunch is built in small, tested steps.
 - [x] **Step 1** — Admin panel auth (login, registration, email verification, password reset, profile, 2FA) + dynamic users, roles & permissions
 - [x] **Step 2** — Automatic permissions for every resource + secure-by-default policies (no permission = no access)
 - [x] **Step 3** — Module Builder: generate migration, model, factory, seeder and resource from the panel or CLI
+- [x] **Step 4** — Modules page: delete any module completely, with trash and one-click restore
 - [ ] More modules — follow progress and release notes at **[filalaunch.com](https://filalaunch.com)**
 
 ---

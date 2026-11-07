@@ -74,7 +74,7 @@ final class ModuleDefinition
         $fields = collect($data['fields'] ?? [])
             ->filter(fn ($field): bool => filled($field['name'] ?? null))
             ->map(fn (array $field): array => [
-                'name' => Str::of($field['name'])->trim()->snake()->lower()->toString(),
+                'name' => self::columnName((string) $field['name']),
                 'type' => (string) ($field['type'] ?? 'string'),
                 'nullable' => (bool) ($field['nullable'] ?? false),
                 'unique' => (bool) ($field['unique'] ?? false),
@@ -130,6 +130,21 @@ final class ModuleDefinition
             ->mapWithKeys(fn (string $class): array => [$class => class_basename($class)])
             ->sort()
             ->all();
+    }
+
+    /**
+     * Forgiving column name: "Title" -> title, "Published At" -> published_at,
+     * "publishedAt" -> published_at, "TITLE" -> title.
+     */
+    public static function columnName(string $name): string
+    {
+        $name = trim(preg_replace('/[\s\-]+/', ' ', $name));
+
+        if ($name === mb_strtoupper($name)) {
+            $name = mb_strtolower($name);
+        }
+
+        return Str::of($name)->snake()->lower()->replaceMatches('/_+/', '_')->toString();
     }
 
     public static function modelClass(string $name): string

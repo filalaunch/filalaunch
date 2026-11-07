@@ -117,8 +117,11 @@ class ModuleBuilder extends Page
                                 TextInput::make('name')
                                     ->placeholder('title')
                                     ->required()
-                                    ->regex('/^[a-z][a-z0-9_]*$/')
-                                    ->validationMessages(['regex' => 'Use snake_case, e.g. published_at.']),
+                                    // Forgiving input: "Title" / "Published At" / " title " -> snake_case on blur.
+                                    // Anything still invalid is reported by ModuleDefinition::errors().
+                                    ->live(onBlur: true)
+                                    ->afterStateUpdated(fn (?string $state, Set $set) => $set('name', ModuleDefinition::columnName((string) $state)))
+                                    ->dehydrateStateUsing(fn (?string $state): string => ModuleDefinition::columnName((string) $state)),
                                 Select::make('type')
                                     ->options(array_combine(ModuleDefinition::FIELD_TYPES, array_map('ucfirst', ModuleDefinition::FIELD_TYPES)))
                                     ->default('string')

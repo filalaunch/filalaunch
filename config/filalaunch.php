@@ -67,6 +67,15 @@ return [
 
     'builder' => [
         'enabled' => (bool) env('FILALAUNCH_BUILDER_ENABLED', env('APP_ENV', 'production') === 'local'),
+
+        // Models that the Modules page never lists or deletes (User, Role and Permission are always protected).
+        'protected_models' => [
+            // App\Models\Plan::class,
+        ],
+
+        // Deleted modules (files + table rows) are kept in storage/app/filalaunch/trash for this many
+        // days so they can be restored, then removed automatically. 0 = delete permanently, no trash.
+        'trash_days' => (int) env('FILALAUNCH_TRASH_DAYS', 7),
     ],
 
 ];

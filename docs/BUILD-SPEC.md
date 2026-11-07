@@ -8,7 +8,7 @@
 |---|---|
 | Product | FilaLaunch — SaaS starter kit · [filalaunch.com](https://filalaunch.com) |
 | Repository | `github.com/filalaunch/filalaunch` (MIT) |
-| Spec version | 1.2 — Step 3 complete (Module Builder) |
+| Spec version | 1.3 — Step 4 complete (Modules page: delete, trash, restore) |
 | Last updated | 2026-11-07 |
 
 ---
@@ -51,11 +51,15 @@ FilaLaunch gives SaaS founders a working business-operations layer on Laravel + 
 app/
 ├── Console/Commands/
 │   ├── SyncPermissionsCommand.php                filalaunch:sync-permissions
-│   └── MakeModuleCommand.php                     filalaunch:make-module (prompts or flags)
+│   ├── MakeModuleCommand.php                     filalaunch:make-module (prompts or flags)
+│   ├── DeleteModuleCommand.php                   filalaunch:delete-module [name] [--all] [--force]
+│   └── ModuleTrashCommand.php                    filalaunch:module-trash list|restore|purge|empty|prune
 ├── Filament/
 │   ├── Concerns/SyncsPermissionCheckboxes.php    trait for Create/Edit pages (Role, User)
 │   ├── Pages/Auth/Register.php                   extends Filament Register; assigns default role
 │   ├── Pages/ModuleBuilder.php                   Module Builder page (Super Admin + builder enabled)
+│   ├── Pages/Modules.php                         Modules page: list, delete, delete all (custom-data table)
+│   ├── Widgets/ModuleTrashWidget.php             Trash list + restore; $isDiscovered = false (not on dashboard)
 │   ├── Resources/{Plural}/                       one folder per resource (Filament v4 layout)
 │   │   ├── {Model}Resource.php
 │   │   ├── Schemas/{Model}Form.php
@@ -79,6 +83,9 @@ app/
     │   ├── ModuleDefinition.php   normalised input + validation + naming rules
     │   ├── ModuleFiles.php        renders stubs; safe edits to existing files
     │   ├── ModuleBuilder.php      orchestration, rollback, cache refresh
+    │   ├── ModuleRemover.php      list + inspect + delete any resource by convention
+    │   ├── ModuleTrash.php        backups in storage/app/filalaunch/trash, restore, prune
+    │   ├── Concerns/RefreshesAppCaches.php  shared route/component/OPcache refresh
     │   └── ModuleBuilderException.php
     └── Permissions/PermissionSync.php  permission generator (used by command, seeder, UI button, builder)
 config/filalaunch.php            kit settings (super admin, role names, abilities)
@@ -103,7 +110,8 @@ art/                             logo assets (README)
 | `SUPERADMIN_NAME` | no (default `Super Admin`) | `SuperAdminSeeder` |
 | `SUPERADMIN_EMAIL` | yes, to seed Super Admin | `SuperAdminSeeder` |
 | `SUPERADMIN_PASSWORD` | yes, to seed Super Admin | `SuperAdminSeeder` |
-| `FILALAUNCH_BUILDER_ENABLED` | no (default `true` only when `APP_ENV=local`) | `config('filalaunch.builder.enabled')` → Module Builder |
+| `FILALAUNCH_BUILDER_ENABLED` | no (default `true` only when `APP_ENV=local`) | `config('filalaunch.builder.enabled')` → Module Builder + Modules |
+| `FILALAUNCH_TRASH_DAYS` | no (default `7`, `0` = no trash) | `config('filalaunch.builder.trash_days')` → ModuleTrash |
 
 **Rule:** never call `env()` outside `config/*.php`. Read values with `config('filalaunch.…')` (config caching breaks `env()` elsewhere).
 
@@ -261,6 +269,10 @@ Any change must keep all of these true. Each is enforced where noted.
 | I16 | A failed module build leaves no trace (files deleted, edits restored, table + migration row removed) | `ModuleBuilder::rollback()` |
 | I17 | Edits to existing files only append (a relation method, an import, a seeder line) and are syntax-checked before writing | `ModuleFiles`, `ModuleBuilder::assertValidPhp()` |
 | I18 | Generated factories never create `User` records (real, loginable accounts) — they pick an existing user | `ModuleFiles::factory()` |
+| I19 | User, Role, Permission (+ `builder.protected_models`) are never listed or deleted | `ModuleRemover::protectedModels()` |
+| I20 | A module is deleted only when nothing else depends on it (no FK from other tables, no blocking relation, no remaining code reference, no shared migration) | `ModuleRemover::inspect()` blockers |
+| I21 | Delete is all-or-nothing and backed up first (unless `trash_days = 0`); restore refuses on conflicts (file exists again / edited file changed since / table exists / parent table missing) | `ModuleRemover::delete()`, `ModuleTrash::conflicts()` |
+| I22 | Trash ids are validated (`Ymd_His_v_Name`) before any filesystem access | `ModuleTrash::validId()` |
 
 ---
 
@@ -367,6 +379,7 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2 | Automatic permission creation for every resource (panel boot check) | ✅ |
 | 2 | Default-deny `DefaultPolicy` + `ResourcePolicy` base + strict authorization | ✅ |
 | 3 | Module Builder page + `filalaunch:make-module` (migration, model, factory, seeder, policy, resource, soft deletes, belongs-to + has one/has many) | ✅ |
+| 4 | Modules page + `filalaunch:delete-module` / `filalaunch:module-trash`: delete any resource by convention, trash with restore, auto-prune | ✅ |
 | — | Next modules | to be defined (see filalaunch.com) |
 
 ---
@@ -410,6 +423,7 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2026-11-07 | Permissions for every resource are created automatically (panel `bootUsing` → `ensureSynced`); only created, never assigned or deleted — assignment is the Super Admin's job |
 | 2026-11-07 | Every model guarded by default: `DefaultPolicy` fallback via `Gate::guessPolicyNamesUsing`; custom policies extend `ResourcePolicy` and hold only safety rules; panel uses `strictAuthorization()` |
 | 2026-11-07 | Module Builder: one engine for page + CLI; Filament's `make:filament-resource --generate` builds the resource from the new table; local-only by default, `FILALAUNCH_BUILDER_ENABLED` for other environments; inverse relations and seeder registration edit existing files by appending only |
+| 2026-11-07 | Module delete works by convention on any resource (no generation manifest); User/Role/Permission protected; dependency + leftover-reference blockers; trash in `storage/app/filalaunch/trash` (gzip rows), 7-day auto-prune, UI restore; test modules are made in a separate clone, not the kit repo |
 | 2026-11-07 | Default `QUEUE_CONNECTION=sync` so the kit runs on shared hosting without a worker; README documents cron and Supervisor setups |
 
 ---
@@ -457,3 +471,23 @@ Requirements: writable `app/`, `database/`, `bootstrap/cache/`; no `--classmap-a
 - New field type → `ModuleDefinition::FIELD_TYPES` (+ `DEFAULTABLE_TYPES` if applicable), and the `match` blocks in `ModuleFiles::migration()`, `model()` (casts) and `fakerFor()`.
 - Keep page and command in sync: both only build input arrays for `ModuleDefinition::fromArray()`.
 - After a successful build the page does a full redirect to the dashboard (not SPA navigation) so the sidebar re-renders with the new resource; notifications survive the redirect via the session.
+
+### 14.5 Deleting modules (`ModuleRemover` + `ModuleTrash`)
+
+Works on **any** resource registered in the admin panel — builder-made or hand-written — found by convention:
+
+| Part | Rule |
+|---|---|
+| Resource | Folder of the resource class (v4 layout) or class file + sibling folder (v3 layout) |
+| Model | Must live in `app/Models` |
+| Factory / seeder / policy | `database/factories/{Model}Factory.php`, `database/seeders/{Model}Seeder.php`, `app/Policies/{Model}Policy.php` |
+| Migrations | Files whose `Schema::create/table` calls touch only this table (a migration touching other tables → blocker) |
+| Other models | Methods `return $this->hasMany|hasOne({Model}::class[, …]);` are removed (with docblock + unused imports). Any other relation/usage of the class → blocker |
+| DatabaseSeeder | `{Model}Seeder::class,` / `$this->call({Model}Seeder::class);` removed |
+| Leftover references | Any other PHP file in `app/`, `database/`, `routes/`, `config/` (comments ignored) using the class → blocker |
+| DB | Foreign keys from other tables → blocker; table dropped; migration rows removed |
+| Permissions | `{prefix}.*` deleted (Spatie removes role/user assignments) |
+
+`deleteAll()` repeatedly deletes modules with no blockers (dependents first). Inside one request deleted classes stay loaded, so modules whose files are gone are skipped.
+
+Trash entry (`storage/app/filalaunch/trash/{Ymd_His_v}_{Model}/`): `manifest.json`, `files/` (deleted files), `originals/` (edited files before edit, with the post-delete sha1 in the manifest), `data.ndjson.gz` (rows), permission snapshot (roles + user ids). Restore = conflict check → copy files back → restore originals → `migrate --path` → insert rows in chunks → recreate permissions/assignments → refresh caches → remove entry. `prune()` runs on Modules page load and after each delete.
