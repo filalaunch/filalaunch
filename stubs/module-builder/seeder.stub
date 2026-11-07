@@ -1,0 +1,17 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\{{ class }};
+use Illuminate\Database\Seeder;
+
+class {{ class }}Seeder extends Seeder
+{
+    /**
+     * Create {{ count }} fake {{ table }} records.
+     */
+    public function run(): void
+    {
+        {{ class }}::factory()->count({{ count }})->create();
+    }
+}

@@ -51,4 +51,22 @@ return [
         'soft_delete_abilities' => ['restore', 'force_delete'],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Module Builder
+    |--------------------------------------------------------------------------
+    |
+    | Generates migration, model, factory, seeder, policy and Filament resource
+    | from the "Module Builder" page (Super Admin only) or
+    | `php artisan filalaunch:make-module`.
+    |
+    | Enabled by default only when APP_ENV=local. Set FILALAUNCH_BUILDER_ENABLED=true
+    | to use it elsewhere (the web server user must be able to write to app/ and database/).
+    |
+    */
+
+    'builder' => [
+        'enabled' => (bool) env('FILALAUNCH_BUILDER_ENABLED', env('APP_ENV', 'production') === 'local'),
+    ],
+
 ];

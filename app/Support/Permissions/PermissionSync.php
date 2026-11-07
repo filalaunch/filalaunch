@@ -133,6 +133,29 @@ class PermissionSync
     }
 
     /**
+     * Create the permissions for a single model right away (used by the Module Builder).
+     *
+     * @return list<string> created permission names
+     */
+    public function syncModel(string $modelClass, string $guard = 'web'): array
+    {
+        $created = [];
+        $prefix = static::prefixFor($modelClass);
+
+        foreach (static::abilitiesFor($modelClass) as $ability) {
+            $permission = Permission::firstOrCreate(['name' => "{$prefix}.{$ability}", 'guard_name' => $guard]);
+
+            if ($permission->wasRecentlyCreated) {
+                $created[] = $permission->name;
+            }
+        }
+
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        return $created;
+    }
+
+    /**
      * Cheap check run on every panel request: compares the needed permissions with
      * Spatie's cached permission list and only syncs when something is missing.
      */

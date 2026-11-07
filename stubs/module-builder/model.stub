@@ -1,0 +1,19 @@
+<?php
+
+namespace App\Models;
+
+{{ imports }}
+
+class {{ class }} extends Model
+{
+    {{ traits }}
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var list<string>
+     */
+    protected $fillable = [
+{{ fillable }}
+    ];{{ casts }}{{ relations }}
+}

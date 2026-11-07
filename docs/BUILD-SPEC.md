@@ -8,7 +8,7 @@
 |---|---|
 | Product | FilaLaunch — SaaS starter kit · [filalaunch.com](https://filalaunch.com) |
 | Repository | `github.com/filalaunch/filalaunch` (MIT) |
-| Spec version | 1.1 — Step 2 complete (auto permissions + default-deny policy) |
+| Spec version | 1.2 — Step 3 complete (Module Builder) |
 | Last updated | 2026-11-07 |
 
 ---
@@ -49,10 +49,13 @@ FilaLaunch gives SaaS founders a working business-operations layer on Laravel + 
 
 ```
 app/
-├── Console/Commands/SyncPermissionsCommand.php   filalaunch:sync-permissions
+├── Console/Commands/
+│   ├── SyncPermissionsCommand.php                filalaunch:sync-permissions
+│   └── MakeModuleCommand.php                     filalaunch:make-module (prompts or flags)
 ├── Filament/
 │   ├── Concerns/SyncsPermissionCheckboxes.php    trait for Create/Edit pages (Role, User)
 │   ├── Pages/Auth/Register.php                   extends Filament Register; assigns default role
+│   ├── Pages/ModuleBuilder.php                   Module Builder page (Super Admin + builder enabled)
 │   ├── Resources/{Plural}/                       one folder per resource (Filament v4 layout)
 │   │   ├── {Model}Resource.php
 │   │   ├── Schemas/{Model}Form.php
@@ -71,12 +74,19 @@ app/
 ├── Providers/
 │   ├── AppServiceProvider.php            Gate::after Super Admin rule
 │   └── Filament/AdminPanelProvider.php   panel id "admin", path "/admin", auth features
-└── Support/Permissions/PermissionSync.php  permission generator (used by command, seeder, UI button)
+└── Support/
+    ├── ModuleBuilder/
+    │   ├── ModuleDefinition.php   normalised input + validation + naming rules
+    │   ├── ModuleFiles.php        renders stubs; safe edits to existing files
+    │   ├── ModuleBuilder.php      orchestration, rollback, cache refresh
+    │   └── ModuleBuilderException.php
+    └── Permissions/PermissionSync.php  permission generator (used by command, seeder, UI button, builder)
 config/filalaunch.php            kit settings (super admin, role names, abilities)
 config/permission.php            Spatie config — models point to App\Models\Role / Permission
 database/migrations/             users table includes 2FA columns
 database/seeders/                DatabaseSeeder → RolesAndPermissionsSeeder → SuperAdminSeeder
-stubs/filalaunch-policy.stub     policy scaffold (extends ResourcePolicy) used by sync-permissions --policies
+stubs/filalaunch-policy.stub     policy scaffold (extends ResourcePolicy) used by sync-permissions --policies and the builder
+stubs/module-builder/            migration / model / factory / seeder templates for the Module Builder
 docs/BUILD-SPEC.md               this file
 CLAUDE.md                        AI entry point → this file
 art/                             logo assets (README)
@@ -93,6 +103,7 @@ art/                             logo assets (README)
 | `SUPERADMIN_NAME` | no (default `Super Admin`) | `SuperAdminSeeder` |
 | `SUPERADMIN_EMAIL` | yes, to seed Super Admin | `SuperAdminSeeder` |
 | `SUPERADMIN_PASSWORD` | yes, to seed Super Admin | `SuperAdminSeeder` |
+| `FILALAUNCH_BUILDER_ENABLED` | no (default `true` only when `APP_ENV=local`) | `config('filalaunch.builder.enabled')` → Module Builder |
 
 **Rule:** never call `env()` outside `config/*.php`. Read values with `config('filalaunch.…')` (config caching breaks `env()` elsewhere).
 
@@ -246,6 +257,10 @@ Any change must keep all of these true. Each is enforced where noted.
 | I12 | Every model is guarded; no permission = no access (except Super Admin) | `Gate::guessPolicyNamesUsing` → `DefaultPolicy`, `strictAuthorization()` |
 | I13 | Every ability Filament checks exists as a real method on `ResourcePolicy` | `ResourcePolicy` (add a method when Filament adds an ability) |
 | I14 | Automation only creates permissions — never assigns or deletes them | `PermissionSync` |
+| I15 | Module Builder runs only when `builder.enabled` is true, and its page only for Super Admin | `ModuleBuilder::enabled()`, `ModuleBuilder` page `canAccess()`, command check |
+| I16 | A failed module build leaves no trace (files deleted, edits restored, table + migration row removed) | `ModuleBuilder::rollback()` |
+| I17 | Edits to existing files only append (a relation method, an import, a seeder line) and are syntax-checked before writing | `ModuleFiles`, `ModuleBuilder::assertValidPhp()` |
+| I18 | Generated factories never create `User` records (real, loginable accounts) — they pick an existing user | `ModuleFiles::factory()` |
 
 ---
 
@@ -306,6 +321,10 @@ If the checkboxes are disabled, the key is absent → permissions are left untou
 
 ## 10. Recipes
 
+### 10.0 Add a CRUD module the quick way
+
+Use the **Module Builder** (§14) — page or `php artisan filalaunch:make-module`. Then edit the generated files as needed. §10.1 is the manual path.
+
 ### 10.1 Add a new CRUD resource with permissions
 
 1. `php artisan make:model Project -m` → add columns → `php artisan migrate`
@@ -347,6 +366,7 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 1 | `filalaunch:sync-permissions [--policies]` + UI sync button | ✅ |
 | 2 | Automatic permission creation for every resource (panel boot check) | ✅ |
 | 2 | Default-deny `DefaultPolicy` + `ResourcePolicy` base + strict authorization | ✅ |
+| 3 | Module Builder page + `filalaunch:make-module` (migration, model, factory, seeder, policy, resource, soft deletes, belongs-to + has one/has many) | ✅ |
 | — | Next modules | to be defined (see filalaunch.com) |
 
 ---
@@ -389,4 +409,49 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2026-11-07 | Panel color stays Amber for now |
 | 2026-11-07 | Permissions for every resource are created automatically (panel `bootUsing` → `ensureSynced`); only created, never assigned or deleted — assignment is the Super Admin's job |
 | 2026-11-07 | Every model guarded by default: `DefaultPolicy` fallback via `Gate::guessPolicyNamesUsing`; custom policies extend `ResourcePolicy` and hold only safety rules; panel uses `strictAuthorization()` |
+| 2026-11-07 | Module Builder: one engine for page + CLI; Filament's `make:filament-resource --generate` builds the resource from the new table; local-only by default, `FILALAUNCH_BUILDER_ENABLED` for other environments; inverse relations and seeder registration edit existing files by appending only |
 | 2026-11-07 | Default `QUEUE_CONNECTION=sync` so the kit runs on shared hosting without a worker; README documents cron and Supervisor setups |
+
+---
+
+## 14. Module Builder
+
+One engine (`App\Support\ModuleBuilder\ModuleBuilder`) behind the **Developer → Module Builder** page and `php artisan filalaunch:make-module`.
+
+### 14.1 Input (`ModuleDefinition`)
+
+| Part | Rules |
+|---|---|
+| Model | Normalised to singular StudlyCase. Rejected if reserved (`User`, `Role`, `Permission`, `Model`, PHP keywords…), or if the model, table, migration, resource folder, factory, seeder or policy already exists |
+| Fields | snake_case; not `id`, timestamps, `deleted_at` or Eloquent property names. Types: `string text integer decimal boolean date datetime json`. Options: nullable, unique (not text/json/boolean), default (string/integer/decimal/boolean only, type-checked) |
+| Belongs-to | Existing `App\Models` class. Adds `{related_snake}_id` (`foreignId()->constrained('<related table>')`) + `belongsTo` method. On delete: cascade / set null (forces nullable) / restrict |
+| Inverse | `has_many` → `{camelPlural}()` or `has_one` → `{camelSingular}()` appended to the related model. Rejected if that method already exists |
+| Options | soft deletes, factory, seeder (+count, implies factory), run seeder now, policy file |
+
+### 14.2 Build order (`ModuleBuilder::build()`)
+
+1. Validate (`errors()`); abort with the full list.
+2. Create migration, model, factory, seeder, policy from `stubs/` — each syntax-checked (`token_get_all(..., TOKEN_PARSE)`).
+3. Append inverse relation method (+ import) to related models; register `{Model}Seeder::class` in `DatabaseSeeder` (`$this->call([...])`). Originals backed up.
+4. `migrate --path=<this migration> --force`.
+5. `make:filament-resource {Model} --generate [--soft-deletes] --not-embedded --panel=admin --record-title-attribute=<name|title|first string>`.
+6. Post-process the resource: bulk actions get `authorizeIndividualRecords()` (I10); json fields use `KeyValue` instead of `Textarea`.
+7. **Any failure in 1–6 → rollback (I16).**
+8. Non-fatal (warnings only): run seeder (skipped with a clear message if a required related model has no factory and no rows), `PermissionSync::syncModel()`, cache refresh.
+
+### 14.3 Production behaviour
+
+Enabled via `FILALAUNCH_BUILDER_ENABLED=true`. After a build:
+
+- `bootstrap/cache/filament` present → `filament:clear-cached-components`
+- routes cached → `route:cache` (fresh app, discovers the new resource); falls back to `route:clear` + warning
+- `opcache_invalidate()` on every created/edited file
+- Migrations/seeders run with `--force`
+
+Requirements: writable `app/`, `database/`, `bootstrap/cache/`; no `--classmap-authoritative` autoloader; generated files must be committed back to the repo.
+
+### 14.4 Extending
+
+- Change generated code style → edit `stubs/module-builder/*.stub` (placeholders `{{ table }}`, `{{ class }}`, `{{ columns }}`, …).
+- New field type → `ModuleDefinition::FIELD_TYPES` (+ `DEFAULTABLE_TYPES` if applicable), and the `match` blocks in `ModuleFiles::migration()`, `model()` (casts) and `fakerFor()`.
+- Keep page and command in sync: both only build input arrays for `ModuleDefinition::fromArray()`.

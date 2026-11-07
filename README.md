@@ -39,6 +39,7 @@
 - [First login](#first-login)
 - [Roles & permissions](#roles--permissions)
 - [Adding your own resources](#adding-your-own-resources)
+- [Module Builder](#module-builder)
 - [Queues](#queues)
 - [Configuration](#configuration)
 - [Useful commands](#useful-commands)
@@ -76,6 +77,16 @@ Everything below works out of the box after `migrate --seed`.
 - **Secure by default** — every model is guarded by a policy automatically. No permission = no access; a new resource stays hidden until the Super Admin grants it. No extra authorization package.
 - **Predictable permission names** — `{resource}.{ability}`, e.g. `users.view_any`, `users.create`, `invoices.delete`.
 - **Permissions create themselves** — add a Filament resource and its `view_any / view / create / update / delete` permissions appear on the next panel visit. Nothing to run, nothing assigned automatically.
+
+### Module Builder (`Developer` menu, Super Admin only)
+
+Generate a complete CRUD module from a form or one command — **migration, model, factory, seeder with fake data, policy and Filament resource**:
+
+- Field types: string, text, integer, decimal, boolean, date, datetime, json — with nullable, unique and default options
+- Optional **soft deletes** (trash filter, restore and force delete, plus `restore` / `force_delete` permissions)
+- **Belongs-to** relationships, with optional **has many / has one** added to the related model
+- Preview before generating; automatic rollback if anything fails
+- Works in production too when enabled (rebuilds route cache, clears component cache)
 
 ### Built-in safety rules
 
@@ -286,6 +297,71 @@ php artisan filalaunch:sync-permissions --policies   # creates app/Policies/Proj
 
 ---
 
+## Module Builder
+
+Generates everything a new CRUD module needs, in one step. Same engine for the panel page and the command.
+
+### From the panel
+
+**Developer → Module Builder** (Super Admin only). Enter a model name, add fields, optional belongs-to relationships and options, click **Generate module**, review the plan, confirm.
+
+### From the command line
+
+```bash
+# Interactive — asks for everything
+php artisan filalaunch:make-module
+
+# One line
+php artisan filalaunch:make-module Post \
+  --fields="title:string,body:text:nullable,price:decimal:default=0,email:string:unique" \
+  --belongs-to=Category:has_many \
+  --belongs-to=User:has_one:nullable \
+  --soft-deletes --seeder=20
+```
+
+| Option | Meaning |
+|---|---|
+| `--fields` | `name:type[:nullable][:unique][:default=value]`, comma-separated. Types: `string text integer decimal boolean date datetime json` |
+| `--belongs-to` | `Model[:has_many\|has_one\|none][:nullable]` — repeatable. Nullable relations use *set null* on delete, others *cascade* |
+| `--soft-deletes` | Trash, restore, force delete |
+| `--factory` | Create a factory |
+| `--seeder=N` | Seeder with N fake records (implies `--factory`), registered in `DatabaseSeeder` and run now |
+| `--no-seed` | Create the seeder but don't run it |
+| `--policy` | Scaffold a policy for custom rules (not needed for permission checks) |
+
+### What gets generated (example: `Post`)
+
+| File / action | Notes |
+|---|---|
+| `database/migrations/…_create_posts_table.php` | Columns, foreign keys (`constrained()`), `softDeletes()` |
+| `app/Models/Post.php` | `$fillable`, casts, `HasFactory`, `SoftDeletes`, `belongsTo` methods |
+| `app/Models/Category.php` *(updated)* | `posts()` has-many method appended — nothing else touched |
+| `database/factories/PostFactory.php` | Fake values by field type and name (`email`, `phone`, `title`…) |
+| `database/seeders/PostSeeder.php` | Added to `DatabaseSeeder`, so `migrate:fresh --seed` recreates the data |
+| `app/Filament/Resources/Posts/` | Form, table, pages — generated from the new table (relationship selects, trashed filter) |
+| Migration run, seeder run | Only this module's migration |
+| `posts.*` permissions | Created, **not assigned** — grant them under Access Control |
+
+If any step fails, everything is rolled back: new files deleted, edited files restored, table dropped.
+
+Generated code is a starting point — edit it like any other code. Templates live in `stubs/module-builder/` if you want to change the defaults.
+
+### Enabling outside local
+
+The builder is **on only when `APP_ENV=local`**. To use it on a server, add to `.env`:
+
+```dotenv
+FILALAUNCH_BUILDER_ENABLED=true
+```
+
+It works with `php artisan optimize` caches on — after generating, it rebuilds the route cache, clears Filament's component cache and refreshes OPcache for edited files. Requirements on a server:
+
+- The web server user can write to `app/`, `database/` and `bootstrap/cache/`.
+- Composer autoloader is **not** built with `--classmap-authoritative` (plain `--optimize-autoloader` is fine), so new classes load without `composer dump-autoload`.
+- Commit the generated files back to your repository, or the next deploy will remove them.
+
+---
+
 ## Configuration
 
 All FilaLaunch settings live in `config/filalaunch.php`.
@@ -295,6 +371,7 @@ All FilaLaunch settings live in `config/filalaunch.php`.
 | `SUPERADMIN_NAME` | `Super Admin` | Name of the seeded Super Admin |
 | `SUPERADMIN_EMAIL` | *(empty)* | Login email. The seeder skips the Super Admin if empty |
 | `SUPERADMIN_PASSWORD` | *(empty)* | Login password. The seeder skips the Super Admin if empty |
+| `FILALAUNCH_BUILDER_ENABLED` | `true` only when `APP_ENV=local` | Turns the Module Builder page and command on/off |
 
 | `config/filalaunch.php` key | Default | Purpose |
 |---|---|---|
@@ -303,6 +380,7 @@ All FilaLaunch settings live in `config/filalaunch.php`.
 | `roles.default` | `user` | Role given to self-registered users |
 | `permissions.abilities` | `view_any, view, create, update, delete` | Abilities generated per resource |
 | `permissions.soft_delete_abilities` | `restore, force_delete` | Added when the model uses `SoftDeletes` |
+| `builder.enabled` | from `FILALAUNCH_BUILDER_ENABLED` | Module Builder on/off |
 
 > The seeder never overwrites an existing Super Admin's password. To change it, use the Profile page or run `migrate:fresh --seed`.
 
@@ -331,6 +409,7 @@ Then run `php artisan migrate --seed`.
 | `php artisan db:seed --class=SuperAdminSeeder` | (Re)create the Super Admin from `.env` |
 | `php artisan filalaunch:sync-permissions` | Create missing permissions now (also happens automatically) |
 | `php artisan filalaunch:sync-permissions --policies` | Same + scaffold policy classes for adding extra rules |
+| `php artisan filalaunch:make-module` | Generate a module (migration, model, factory, seeder, resource) |
 | `php artisan permission:cache-reset` | Clear Spatie's permission cache |
 | `php artisan queue:work` | Process queued jobs (only when `QUEUE_CONNECTION` isn't `sync`) |
 | `php artisan queue:restart` | Restart workers after a deploy |
@@ -342,10 +421,13 @@ Then run `php artisan migrate --seed`.
 
 ```
 app/
-├── Console/Commands/SyncPermissionsCommand.php   # filalaunch:sync-permissions
+├── Console/Commands/
+│   ├── SyncPermissionsCommand.php                # filalaunch:sync-permissions
+│   └── MakeModuleCommand.php                     # filalaunch:make-module
 ├── Filament/
 │   ├── Concerns/SyncsPermissionCheckboxes.php    # saves grouped permission checkboxes
 │   ├── Pages/Auth/Register.php                   # assigns default role on sign-up
+│   ├── Pages/ModuleBuilder.php                   # Module Builder page
 │   ├── Resources/
 │   │   ├── Users/        (Schemas/, Tables/, Pages/, Actions/)
 │   │   ├── Roles/        (Schemas/, Tables/, Pages/)
@@ -357,11 +439,14 @@ app/
 ├── Providers/
 │   ├── AppServiceProvider.php                    # Super Admin gate + default policy
 │   └── Filament/AdminPanelProvider.php           # panel + auth features
-└── Support/Permissions/PermissionSync.php        # permission generator
+└── Support/
+    ├── ModuleBuilder/                            # Module Builder engine
+    └── Permissions/PermissionSync.php            # permission generator
 config/filalaunch.php                             # kit settings
 database/seeders/                                 # roles, permissions, Super Admin
 docs/BUILD-SPEC.md                                # architecture & conventions
 stubs/filalaunch-policy.stub                      # template for generated policies
+stubs/module-builder/                             # templates for generated modules
 ```
 
 ---
@@ -383,6 +468,7 @@ FilaLaunch is built in small, tested steps.
 
 - [x] **Step 1** — Admin panel auth (login, registration, email verification, password reset, profile, 2FA) + dynamic users, roles & permissions
 - [x] **Step 2** — Automatic permissions for every resource + secure-by-default policies (no permission = no access)
+- [x] **Step 3** — Module Builder: generate migration, model, factory, seeder and resource from the panel or CLI
 - [ ] More modules — follow progress and release notes at **[filalaunch.com](https://filalaunch.com)**
 
 ---
