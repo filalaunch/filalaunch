@@ -85,7 +85,8 @@ Generate a complete CRUD module from a form or one command — **migration, mode
 - Field types: string, text, integer, decimal, boolean, date, datetime, json — with nullable, unique and default options
 - Optional **soft deletes** (trash filter, restore and force delete, plus `restore` / `force_delete` permissions)
 - **Belongs-to** relationships, with optional **has many / has one** added to the related model
-- Preview before generating; automatic rollback if anything fails
+- Choose the **menu icon, navigation group and sort order** for the new resource
+- Preview before generating; automatic rollback if anything fails; the panel reloads so the new menu item appears instantly
 - Works in production too when enabled (rebuilds route cache, clears component cache)
 
 ### Built-in safety rules
@@ -303,7 +304,7 @@ Generates everything a new CRUD module needs, in one step. Same engine for the p
 
 ### From the panel
 
-**Developer → Module Builder** (Super Admin only). Enter a model name, add fields, optional belongs-to relationships and options, click **Generate module**, review the plan, confirm.
+**Developer → Module Builder** (Super Admin only). Enter a model name, pick the menu icon, navigation group (existing or new) and sort order, add fields, optional belongs-to relationships and options, click **Generate module**, review the plan, confirm. You're taken to the dashboard with the new resource already in the sidebar.
 
 ### From the command line
 
@@ -316,7 +317,8 @@ php artisan filalaunch:make-module Post \
   --fields="title:string,body:text:nullable,price:decimal:default=0,email:string:unique" \
   --belongs-to=Category:has_many \
   --belongs-to=User:has_one:nullable \
-  --soft-deletes --seeder=20
+  --soft-deletes --seeder=20 \
+  --icon=newspaper --group=Content --sort=1
 ```
 
 | Option | Meaning |
@@ -328,6 +330,9 @@ php artisan filalaunch:make-module Post \
 | `--seeder=N` | Seeder with N fake records (implies `--factory`), registered in `DatabaseSeeder` and run now |
 | `--no-seed` | Create the seeder but don't run it |
 | `--policy` | Scaffold a policy for custom rules (not needed for permission checks) |
+| `--icon` | Menu icon — any [Heroicon](https://heroicons.com) name, e.g. `newspaper`, `shopping-cart` (outlined style) |
+| `--group` | Navigation group — existing or new, e.g. `Content` |
+| `--sort` | Position within the group (lower first) |
 
 ### What gets generated (example: `Post`)
 

@@ -10,7 +10,9 @@ use Illuminate\Support\Str;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
+use function Laravel\Prompts\search;
 use function Laravel\Prompts\select;
+use function Laravel\Prompts\suggest;
 use function Laravel\Prompts\text;
 
 class MakeModuleCommand extends Command
@@ -23,7 +25,10 @@ class MakeModuleCommand extends Command
                             {--factory : Create a factory}
                             {--seeder= : Create a seeder with N fake records (implies --factory)}
                             {--no-seed : Create the seeder but don\'t run it now}
-                            {--policy : Scaffold a policy class for custom rules}';
+                            {--policy : Scaffold a policy class for custom rules}
+                            {--icon= : Menu icon (Heroicon), e.g. newspaper or OutlinedNewspaper}
+                            {--group= : Navigation group, e.g. Content}
+                            {--sort= : Navigation sort order}';
 
     protected $description = 'Generate migration, model, factory, seeder, policy and Filament resource for a new module';
 
@@ -132,6 +137,9 @@ class MakeModuleCommand extends Command
             'seed_count' => (int) $this->option('seeder') ?: 10,
             'run_seeder' => ! $this->option('no-seed'),
             'policy' => (bool) $this->option('policy'),
+            'navigation_icon' => $this->option('icon'),
+            'navigation_group' => $this->option('group'),
+            'navigation_sort' => $this->option('sort'),
         ];
     }
 
@@ -207,6 +215,18 @@ class MakeModuleCommand extends Command
         $runSeeder = $seeder && confirm('Run the seeder now?', default: true);
         $policy = confirm('Scaffold a policy for custom rules? (not needed for permission checks)', default: false);
 
+        $this->components->info('Menu');
+
+        $icon = $this->option('icon') ?: search(
+            label: 'Menu icon',
+            options: fn (string $value): array => ModuleDefinition::iconOptions($value),
+            placeholder: 'Type to search, e.g. newspaper',
+            hint: 'Leave empty and press Enter for the default icon',
+            required: false,
+        );
+        $group = $this->option('group') ?: suggest('Navigation group', ModuleDefinition::existingNavigationGroups(), hint: 'Existing group or a new name — leave empty for none');
+        $sort = $this->option('sort') ?: text('Sort order', hint: 'Lower numbers appear first — leave empty for auto', validate: fn (string $v): ?string => $v === '' || preg_match('/^-?\d+$/', $v) ? null : 'Enter a whole number');
+
         return [
             'model' => $model,
             'fields' => $fields,
@@ -217,6 +237,9 @@ class MakeModuleCommand extends Command
             'seed_count' => $count,
             'run_seeder' => $runSeeder,
             'policy' => $policy,
+            'navigation_icon' => $icon ?: null,
+            'navigation_group' => $group ?: null,
+            'navigation_sort' => $sort !== '' ? $sort : null,
         ];
     }
 }

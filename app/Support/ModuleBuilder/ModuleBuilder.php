@@ -75,7 +75,13 @@ class ModuleBuilder
         }
 
         $steps[] = "Run the migration (create table {$d->table()})";
-        $steps[] = "Create Filament resource app/Filament/Resources/{$d->pluralStudly()}";
+        $menu = array_filter([
+            $d->navigationIcon ? 'icon '.Str::headline(Str::after($d->navigationIcon, 'Outlined')) : null,
+            $d->navigationGroup ? "group \"{$d->navigationGroup}\"" : null,
+            $d->navigationSort !== null ? "sort {$d->navigationSort}" : null,
+        ]);
+
+        $steps[] = "Create Filament resource app/Filament/Resources/{$d->pluralStudly()}".($menu ? ' (menu: '.implode(', ', $menu).')' : '');
 
         if ($d->seeder && $d->runSeeder) {
             $steps[] = "Seed {$d->seedCount} fake records";
@@ -184,6 +190,7 @@ class ModuleBuilder
 
             $this->tweak("{$resourceDir}/Tables/{$d->pluralStudly()}Table.php", fn (string $s): string => $render->hardenTable($s));
             $this->tweak("{$resourceDir}/Schemas/{$d->model}Form.php", fn (string $s): string => $render->adjustForm($s));
+            $this->tweak($resourceFile, fn (string $s): string => $render->applyNavigation($s));
         } catch (Throwable $e) {
             $this->rollback();
 

@@ -255,6 +255,36 @@ class ModuleFiles
     }
 
     /**
+     * Set the menu icon, navigation group and sort order on the generated resource class.
+     */
+    public function applyNavigation(string $source): string
+    {
+        $d = $this->definition;
+        $iconLine = '/^([ \t]*)protected static string\|BackedEnum\|null \$navigationIcon = [^;]+;$/m';
+
+        if ($d->navigationIcon !== null) {
+            $source = preg_replace($iconLine, '$1protected static string|BackedEnum|null $navigationIcon = Heroicon::'.$d->navigationIcon.';', $source, 1);
+        }
+
+        $extra = '';
+
+        if ($d->navigationGroup !== null) {
+            $extra .= "\n\n    protected static string|UnitEnum|null \$navigationGroup = ".var_export($d->navigationGroup, true).';';
+            $source = $this->addImport($source, 'UnitEnum');
+        }
+
+        if ($d->navigationSort !== null) {
+            $extra .= "\n\n    protected static ?int \$navigationSort = {$d->navigationSort};";
+        }
+
+        if ($extra === '') {
+            return $source;
+        }
+
+        return preg_replace_callback($iconLine, fn (array $m): string => $m[0].$extra, $source, 1);
+    }
+
+    /**
      * json columns are cast to arrays — edit them with KeyValue instead of Textarea.
      */
     public function adjustForm(string $source): string

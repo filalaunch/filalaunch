@@ -2,6 +2,8 @@
 
 namespace App\Support\ModuleBuilder;
 
+use Filament\Facades\Filament;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
@@ -57,6 +59,9 @@ final class ModuleDefinition
         public readonly int $seedCount = 10,
         public readonly bool $runSeeder = true,
         public readonly bool $policy = false,
+        public readonly ?string $navigationIcon = null,
+        public readonly ?string $navigationGroup = null,
+        public readonly ?int $navigationSort = null,
     ) {}
 
     /**
@@ -106,6 +111,9 @@ final class ModuleDefinition
             seedCount: max(1, min(10000, (int) ($data['seed_count'] ?? 10))),
             runSeeder: (bool) ($data['run_seeder'] ?? true),
             policy: (bool) ($data['policy'] ?? false),
+            navigationIcon: filled($data['navigation_icon'] ?? null) ? (self::iconCase((string) $data['navigation_icon']) ?? (string) $data['navigation_icon']) : null,
+            navigationGroup: filled($data['navigation_group'] ?? null) ? trim((string) $data['navigation_group']) : null,
+            navigationSort: filled($data['navigation_sort'] ?? null) && is_numeric($data['navigation_sort']) ? (int) $data['navigation_sort'] : null,
         );
     }
 
@@ -127,6 +135,59 @@ final class ModuleDefinition
     public static function modelClass(string $name): string
     {
         return str_contains($name, '\\') ? ltrim($name, '\\') : 'App\\Models\\'.Str::studly($name);
+    }
+
+    // ── Navigation ───────────────────────────────────────────────────
+
+    /**
+     * Resolve "newspaper", "o-newspaper" or "OutlinedNewspaper" to a Heroicon case name.
+     */
+    public static function iconCase(string $icon): ?string
+    {
+        $icon = trim($icon);
+        $cases = collect(Heroicon::cases());
+
+        // Prefer the outlined style used across the sidebar ("tag" -> OutlinedTag, not solid Tag).
+        return ($cases->first(fn (Heroicon $case): bool => $case->name === 'Outlined'.Str::studly($icon))
+            ?? $cases->first(fn (Heroicon $case): bool => $case->name === $icon)
+            ?? $cases->first(fn (Heroicon $case): bool => $case->value === $icon))?->name;
+    }
+
+    /**
+     * Outlined Heroicons for the icon picker: case name => label.
+     *
+     * @return array<string, string>
+     */
+    public static function iconOptions(?string $search = null, int $limit = 50): array
+    {
+        return collect(Heroicon::cases())
+            ->filter(fn (Heroicon $case): bool => str_starts_with($case->name, 'Outlined'))
+            ->mapWithKeys(fn (Heroicon $case): array => [$case->name => Str::headline(Str::after($case->name, 'Outlined'))])
+            ->filter(fn (string $label): bool => blank($search) || Str::contains(strtolower($label), strtolower(trim($search))))
+            ->take($limit)
+            ->all();
+    }
+
+    /**
+     * Navigation groups already used in the admin panel (for suggestions).
+     *
+     * @return list<string>
+     */
+    public static function existingNavigationGroups(): array
+    {
+        try {
+            $panel = Filament::getPanel('admin');
+        } catch (Throwable) {
+            return [];
+        }
+
+        return collect([...$panel->getResources(), ...$panel->getPages()])
+            ->map(fn (string $class): mixed => rescue(fn () => $class::getNavigationGroup(), report: false))
+            ->filter(fn (mixed $group): bool => is_string($group) && $group !== '')
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
     }
 
     // ── Naming ────────────────────────────────────────────────────────
@@ -314,6 +375,15 @@ final class ModuleDefinition
             if (! array_key_exists($relation['on_delete'], self::ON_DELETE)) {
                 $errors[] = "Unknown on-delete action [{$relation['on_delete']}] for {$short}.";
             }
+        }
+
+        // Menu
+        if ($this->navigationIcon !== null && ! defined(Heroicon::class.'::'.$this->navigationIcon)) {
+            $errors[] = "Unknown menu icon [{$this->navigationIcon}].";
+        }
+
+        if ($this->navigationGroup !== null && (mb_strlen($this->navigationGroup) > 64 || preg_match('/[\r\n]/', $this->navigationGroup))) {
+            $errors[] = 'Navigation group must be a single line of up to 64 characters.';
         }
 
         return $errors;

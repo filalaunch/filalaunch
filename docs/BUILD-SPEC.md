@@ -427,6 +427,7 @@ One engine (`App\Support\ModuleBuilder\ModuleBuilder`) behind the **Developer �
 | Belongs-to | Existing `App\Models` class. Adds `{related_snake}_id` (`foreignId()->constrained('<related table>')`) + `belongsTo` method. On delete: cascade / set null (forces nullable) / restrict |
 | Inverse | `has_many` → `{camelPlural}()` or `has_one` → `{camelSingular}()` appended to the related model. Rejected if that method already exists |
 | Options | soft deletes, factory, seeder (+count, implies factory), run seeder now, policy file |
+| Menu | icon (`Heroicon` case; "newspaper" → `OutlinedNewspaper`, outlined preferred), navigation group (free text ≤ 64, suggestions from existing groups), sort order (int). All optional |
 
 ### 14.2 Build order (`ModuleBuilder::build()`)
 
@@ -435,7 +436,7 @@ One engine (`App\Support\ModuleBuilder\ModuleBuilder`) behind the **Developer �
 3. Append inverse relation method (+ import) to related models; register `{Model}Seeder::class` in `DatabaseSeeder` (`$this->call([...])`). Originals backed up.
 4. `migrate --path=<this migration> --force`.
 5. `make:filament-resource {Model} --generate [--soft-deletes] --not-embedded --panel=admin --record-title-attribute=<name|title|first string>`.
-6. Post-process the resource: bulk actions get `authorizeIndividualRecords()` (I10); json fields use `KeyValue` instead of `Textarea`.
+6. Post-process the resource: bulk actions get `authorizeIndividualRecords()` (I10); json fields use `KeyValue` instead of `Textarea`; `$navigationIcon` / `$navigationGroup` / `$navigationSort` set from the menu input (`ModuleFiles::applyNavigation()`).
 7. **Any failure in 1–6 → rollback (I16).**
 8. Non-fatal (warnings only): run seeder (skipped with a clear message if a required related model has no factory and no rows), `PermissionSync::syncModel()`, cache refresh.
 
@@ -455,3 +456,4 @@ Requirements: writable `app/`, `database/`, `bootstrap/cache/`; no `--classmap-a
 - Change generated code style → edit `stubs/module-builder/*.stub` (placeholders `{{ table }}`, `{{ class }}`, `{{ columns }}`, …).
 - New field type → `ModuleDefinition::FIELD_TYPES` (+ `DEFAULTABLE_TYPES` if applicable), and the `match` blocks in `ModuleFiles::migration()`, `model()` (casts) and `fakerFor()`.
 - Keep page and command in sync: both only build input arrays for `ModuleDefinition::fromArray()`.
+- After a successful build the page does a full redirect to the dashboard (not SPA navigation) so the sidebar re-renders with the new resource; notifications survive the redirect via the session.

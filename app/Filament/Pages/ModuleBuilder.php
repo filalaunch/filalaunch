@@ -25,6 +25,8 @@ use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use UnitEnum;
 
+use function Filament\Support\generate_icon_html;
+
 /**
  * Super Admin page that generates a full module (migration, model, factory,
  * seeder, policy, Filament resource, permissions). Same engine as
@@ -78,6 +80,32 @@ class ModuleBuilder extends Page
                                     ? 'Singular, e.g. Post or BlogPost.'
                                     : "Model App\\Models\\{$model} · table ".Str::snake(Str::pluralStudly($model));
                             }),
+                    ]),
+
+                Section::make('Menu')
+                    ->description('Where the new resource appears in the sidebar.')
+                    ->columns(['default' => 1, 'md' => 3])
+                    ->schema([
+                        Select::make('navigation_icon')
+                            ->label('Icon')
+                            ->placeholder('Default (rectangle stack)')
+                            ->searchable()
+                            ->allowHtml()
+                            ->getSearchResultsUsing(fn (?string $search): array => $this->iconOptionsHtml($search))
+                            ->getOptionLabelUsing(fn (?string $value): ?string => $value ? ($this->iconOptionsHtml(null, $value)[$value] ?? $value) : null)
+                            ->options(fn (): array => $this->iconOptionsHtml(null)),
+                        TextInput::make('navigation_group')
+                            ->label('Navigation group')
+                            ->placeholder('None')
+                            ->maxLength(64)
+                            ->datalist(fn (): array => ModuleDefinition::existingNavigationGroups())
+                            ->helperText('Pick an existing group or type a new one.'),
+                        TextInput::make('navigation_sort')
+                            ->label('Sort order')
+                            ->numeric()
+                            ->integer()
+                            ->placeholder('Auto')
+                            ->helperText('Lower numbers appear first in the group.'),
                     ]),
 
                 Section::make('Fields')
@@ -243,8 +271,30 @@ class ModuleBuilder extends Page
                     Notification::make()->warning()->title($warning)->persistent()->send();
                 }
 
-                $this->form->fill();
+                // Full page load (not SPA navigation) so the sidebar shows the new resource.
+                // Notifications are kept in the session and shown on the dashboard.
+                $this->redirect(filament()->getPanel('admin')->getUrl());
             });
+    }
+
+    /**
+     * Icon options with a small preview.
+     *
+     * @return array<string, string> case name => HTML label
+     */
+    protected function iconOptionsHtml(?string $search, ?string $only = null): array
+    {
+        $options = $only !== null
+            ? array_filter(ModuleDefinition::iconOptions(null, 1000), fn (string $key): bool => $key === $only, ARRAY_FILTER_USE_KEY)
+            : ModuleDefinition::iconOptions($search);
+
+        return collect($options)
+            ->mapWithKeys(fn (string $label, string $case): array => [
+                $case => '<span style="display:inline-flex;align-items:center;gap:.5rem">'
+                    .generate_icon_html(constant(Heroicon::class.'::'.$case))?->toHtml()
+                    .e($label).'</span>',
+            ])
+            ->all();
     }
 
     protected function definition(): ModuleDefinition
