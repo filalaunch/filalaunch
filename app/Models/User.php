@@ -11,7 +11,6 @@ use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Spatie\Permission\Traits\HasRoles;
@@ -76,13 +75,5 @@ class User extends Authenticatable implements FilamentUser, HasAppAuthentication
     public function hasAppAuthenticationEnabled(): bool
     {
         return filled($this->app_authentication_secret);
-    }
-
-    /**
-     * @return HasMany<Post, $this>
-     */
-    public function posts(): HasMany
-    {
-        return $this->hasMany(Post::class);
     }
 }
