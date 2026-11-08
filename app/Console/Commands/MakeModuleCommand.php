@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Support\ModuleBuilder\ModuleBuilder;
 use App\Support\ModuleBuilder\ModuleBuilderException;
 use App\Support\ModuleBuilder\ModuleDefinition;
+use App\Support\Teams\Teams;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 
@@ -28,7 +29,9 @@ class MakeModuleCommand extends Command
                             {--policy : Scaffold a policy class for custom rules}
                             {--icon= : Menu icon (Heroicon), e.g. newspaper or OutlinedNewspaper}
                             {--group= : Navigation group, e.g. Content}
-                            {--sort= : Navigation sort order}';
+                            {--sort= : Navigation sort order}
+                            {--panel=admin : Panel: admin or app (customer panel)}
+                            {--team : Rows belong to a team (customer panel + teams on)}';
 
     protected $description = 'Generate migration, model, factory, seeder, policy and Filament resource for a new module';
 
@@ -140,6 +143,8 @@ class MakeModuleCommand extends Command
             'navigation_icon' => $this->option('icon'),
             'navigation_group' => $this->option('group'),
             'navigation_sort' => $this->option('sort'),
+            'panel' => $this->option('panel'),
+            'belongs_to_team' => (bool) $this->option('team'),
         ];
     }
 
@@ -215,6 +220,12 @@ class MakeModuleCommand extends Command
         $runSeeder = $seeder && confirm('Run the seeder now?', default: true);
         $policy = confirm('Scaffold a policy for custom rules? (not needed for permission checks)', default: false);
 
+        $panel = Teams::appPanelEnabled()
+            ? select('Panel', ['admin' => 'Admin panel (staff)', 'app' => 'Customer panel'], default: $this->option('panel') ?: 'admin')
+            : 'admin';
+        $team = $panel === 'app' && Teams::enabled()
+            && confirm('Rows belong to a '.strtolower(Teams::label()).'? (each '.strtolower(Teams::label()).' sees only its own)', default: true);
+
         $this->components->info('Menu');
 
         $icon = $this->option('icon') ?: search(
@@ -240,6 +251,8 @@ class MakeModuleCommand extends Command
             'navigation_icon' => $icon ?: null,
             'navigation_group' => $group ?: null,
             'navigation_sort' => $sort !== '' ? $sort : null,
+            'panel' => $panel,
+            'belongs_to_team' => $team,
         ];
     }
 }

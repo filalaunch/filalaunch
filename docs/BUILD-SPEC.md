@@ -8,8 +8,8 @@
 |---|---|
 | Product | FilaLaunch — SaaS starter kit · [filalaunch.com](https://filalaunch.com) |
 | Repository | `github.com/filalaunch/filalaunch` (MIT) |
-| Spec version | 1.4 — Step 5 complete (Plans & subscriptions) |
-| Last updated | 2026-11-07 |
+| Spec version | 1.5 — Step 6 complete (Customer panel, teams, System settings) |
+| Last updated | 2026-11-09 |
 
 ---
 
@@ -17,12 +17,12 @@
 
 FilaLaunch gives SaaS founders a working business-operations layer on Laravel + Filament, so they start on their product instead of rebuilding auth, roles and admin screens.
 
-**Current scope (Step 1):** a single Filament **admin panel** with complete authentication and dynamic, database-driven access control.
+**Current scope:** a Filament **admin panel** with complete authentication and dynamic, database-driven access control, Module Builder, plans & billing, and an **optional** customer panel (`/app`) with **optional** teams (§16).
 
 **Explicitly out of scope right now** (do not add without a decision recorded in §13):
 
-- A separate end-user panel (e.g. `/app`)
-- Teams / multi-tenancy (Spatie `teams` is `false`)
+- Database-per-tenant / subdomain tenancy (teams are single-database, `team_id` + path `/app/{team}`)
+- Team-scoped Spatie roles (Spatie `teams` stays `false`; team roles are owner/admin/member on the pivot)
 - Filament Shield or any other authorization package
 - SPA front-end
 
@@ -62,6 +62,12 @@ app/
 │   ├── Widgets/ModuleTrashWidget.php             Trash list + restore; $isDiscovered = false (not on dashboard)
 │   ├── Pages/MyPlan.php (+ resources/views/filament/pages/my-plan.blade.php)  customer plan page
 │   ├── Pages/AccessRules.php, Pages/BillingSettings.php
+│   ├── Pages/SystemSettingsPage.php              System → Settings (slug "settings", Super Admin)
+│   ├── App/Resources/                            customer panel resources (builder output for panel "app")
+│   ├── App/Pages/                                customer panel pages
+│   ├── App/Tenancy/RegisterTeam.php              create team (Filament RegisterTenant)
+│   ├── App/Tenancy/EditTeam.php                  team settings: name/slug, members + invitations table, transfer, leave, delete
+│   ├── Resources/Teams                           staff list of teams (index only; members modal; delete) — visible when teams on
 │   ├── Resources/Plans, Subscriptions (Actions/SubscriptionActions), Payments (index only), Meters (simple)
 │   ├── Resources/{Plural}/                       one folder per resource (Filament v4 layout)
 │   │   ├── {Model}Resource.php
@@ -72,9 +78,14 @@ app/
 │   └── Support/PermissionCheckboxes.php          grouped permission CheckboxLists
 ├── Enums/                PlanType, BillingInterval, SubscriptionStatus, PaymentStatus, PaymentKind, AccessMode, MeterReset, LimitBehavior (Filament HasLabel/HasColor)
 ├── Http/Controllers/Billing/PaymentReceiptController.php   private receipt download
+├── Http/Controllers/Teams/AcceptTeamInvitationController.php  /team-invitations/{token}
+├── Http/Middleware/RedirectCustomersToAppPanel.php  /admin auth middleware (extends Filament Authenticate): customers → /app
+├── Notifications/TeamInvitationNotification.php
 ├── Models/
 │   ├── User.php          HasRoles, HasSubscriptions, MustVerifyEmail, FilamentUser, 2FA contracts
 │   ├── Plan, PlanMeter, Meter, Subscription, Payment, UsageRecord, ModuleAccessRule, Setting
+│   ├── Team, TeamInvitation                      (Enums/TeamRole: owner / admin / member)
+│   ├── Concerns/BelongsToTeam.php      team global scope + team_id on create for team modules
 │   ├── Concerns/HasSubscriptions.php   planAllows(), activePlans(), recordUsage(), canUse(), usageSummary()
 │   ├── Role.php          extends Spatie Role (+ protectedNames(), isProtected(), isSuperAdmin())
 │   └── Permission.php    extends Spatie Permission (+ getGroup())
@@ -83,10 +94,13 @@ app/
 │   ├── DefaultPolicy.php    fallback for models without their own policy (no permission = no access)
 │   └── {Model}Policy.php    optional, only for extra safety rules (User, Role, Permission)
 ├── Providers/
-│   ├── AppServiceProvider.php            Gate::after Super Admin rule
-│   └── Filament/AdminPanelProvider.php   panel id "admin", path "/admin", auth features
+│   ├── AppServiceProvider.php            SystemSettings::apply() (register), Gate::after Super Admin rule
+│   ├── Filament/AdminPanelProvider.php   panel id "admin", path "/admin", auth features
+│   └── Filament/AppPanelProvider.php     panel id "app" — registered only when the customer panel is on; tenancy when teams on
 └── Support/
     ├── Settings.php           DB key/value settings (secret fields encrypted)
+    ├── SystemSettings.php     System → Settings: saved values → config at boot (cached in storage/app/filalaunch/settings.json)
+    ├── Teams/Teams.php        teams service: create, personal team, members, roles, ownership, invitations, delete
     ├── Billing/
     │   ├── Billing.php        lifecycle: start, bank transfer, approve/reject, cancel/resume/extend/change, settings, gateways list
     │   ├── ModuleAccess.php   access mode per module; the single allow/deny decision
@@ -126,6 +140,11 @@ art/                             logo assets (README)
 | `FILALAUNCH_TRASH_DAYS` | no (default `7`, `0` = no trash) | `config('filalaunch.builder.trash_days')` → ModuleTrash |
 | `FILALAUNCH_CURRENCY` | no (default `USD`) | `Billing::currency()` |
 | `FILALAUNCH_GRACE_DAYS` | no (default `3`) | `Billing::graceDays()` |
+| `FILALAUNCH_APP_PANEL` | no (default `false`) | `config('filalaunch.panels.app.enabled')` |
+| `FILALAUNCH_TENANCY` | no (default `false`) | `config('filalaunch.tenancy.enabled')` |
+| `FILALAUNCH_TENANT_LABEL` / `_BILLING` / `FILALAUNCH_INVITE_DAYS` | no (`Team` / `team` / `7`) | `config('filalaunch.tenancy.*')` |
+
+All `FILALAUNCH_*` keys (and app name + mail) are **starting defaults only**: the Super Admin changes them in System → Settings, which wins (§16.4).
 
 **Rule:** never call `env()` outside `config/*.php`. Read values with `config('filalaunch.…')` (config caching breaks `env()` elsewhere).
 
@@ -294,6 +313,14 @@ Any change must keep all of these true. Each is enforced where noted.
 | I29 | Billing models are protected kit models (never listed/deleted on the Modules page); module delete/restore also removes/restores plan permission links | `ModuleRemover::protectedModels()`, `ModuleTrash` snapshot |
 | I21 | Delete is all-or-nothing and backed up first (unless `trash_days = 0`); restore refuses on conflicts (file exists again / edited file changed since / table exists / parent table missing) | `ModuleRemover::delete()`, `ModuleTrash::conflicts()` |
 | I22 | Trash ids are validated (`Ymd_His_v_Name`) before any filesystem access | `ModuleTrash::validId()` |
+| I30 | With the customer panel on, `/admin` is staff-only (Super Admin or `admin.access`); customers are redirected to `/app` | `User::canAccessPanel()`, `RedirectCustomersToAppPanel` |
+| I31 | Team-module rows are only visible inside their team and are created with the current team's id | `BelongsToTeam` global scope + Filament tenancy (`ownershipRelationship: 'team'`) |
+| I32 | A user only enters teams they belong to | `User::getTenants()`, `canAccessTenant()` |
+| I33 | Invitation tokens are random, stored as sha256, single-use, expire, and only accept for the invited email | `Teams::invite()`, `TeamInvitation::findByToken()`, `Teams::accept()` |
+| I34 | Only team owners/admins change team details, members, invitations or the team's plan; a team has exactly one owner; the owner can't leave or be removed (transfer first) | `EditTeam`, `Teams`, `Billing::assertCanManageBilling()` |
+| I35 | Billing owner: team billing → subscriptions/payments carry the current `team_id` and members share access; user billing → `team_id` null | `Billing::ownerTeam()`, `HasSubscriptions::billableSubscriptions()` |
+| I36 | A team with an active paid plan can't be deleted | `Teams::delete()` |
+| I37 | Teams on ⇒ customer panel on; settings precedence is saved setting → `.env` → config default; secrets are encrypted and never sent to the browser | `SystemSettings` |
 
 ---
 
@@ -402,6 +429,7 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 3 | Module Builder page + `filalaunch:make-module` (migration, model, factory, seeder, policy, resource, soft deletes, belongs-to + has one/has many) | ✅ |
 | 4 | Modules page + `filalaunch:delete-module` / `filalaunch:module-trash`: delete any resource by convention, trash with restore, auto-prune | ✅ |
 | 5 | Plans (one-time / subscription / usage), subscriptions, access rules, bank transfer + receipts, usage meters, My plan, billing settings (gateways coming soon) | ✅ |
+| 6 | Optional customer panel `/app`, optional teams (personal team, invitations, roles, team billing), team-aware Module Builder, staff Teams screen, System → Settings (no `.env` editing) | ✅ |
 | — | Next modules | to be defined (see filalaunch.com) |
 
 ---
@@ -447,6 +475,8 @@ Create it with `php artisan make:filament-panel app`, then update `User::canAcce
 | 2026-11-07 | Module Builder: one engine for page + CLI; Filament's `make:filament-resource --generate` builds the resource from the new table; local-only by default, `FILALAUNCH_BUILDER_ENABLED` for other environments; inverse relations and seeder registration edit existing files by appending only |
 | 2026-11-07 | Module delete works by convention on any resource (no generation manifest); User/Role/Permission protected; dependency + leftover-reference blockers; trash in `storage/app/filalaunch/trash` (gzip rows), 7-day auto-prune, UI restore; test modules are made in a separate clone, not the kit repo |
 | 2026-11-08 | Billing: 3 plan types, each switchable in settings; plans grant permissions; per-module access mode (permission / plan / either); several active plans per user; offline bank transfer only (receipt required, admin approval, manual renewal); gateways listed as coming soon; USD from config; prices in minor units |
+| 2026-11-09 | Optional customer panel `/app` (admin becomes staff-only, `admin.access` permission) and optional teams via Filament tenancy, single DB, `team_id`, path `/app/{team}`; label configurable; personal team on sign-up; email invitations; team billing by default (per-user option); one step |
+| 2026-11-09 | Every kit setting (app name, mail, panels, teams, billing, builder) managed in System → Settings; `.env` only provides defaults |
 | 2026-11-07 | Default `QUEUE_CONNECTION=sync` so the kit runs on shared hosting without a worker; README documents cron and Supervisor setups |
 
 ---
@@ -464,6 +494,8 @@ One engine (`App\Support\ModuleBuilder\ModuleBuilder`) behind the **Developer �
 | Belongs-to | Existing `App\Models` class. Adds `{related_snake}_id` (`foreignId()->constrained('<related table>')`) + `belongsTo` method. On delete: cascade / set null (forces nullable) / restrict |
 | Inverse | `has_many` → `{camelPlural}()` or `has_one` → `{camelSingular}()` appended to the related model. Rejected if that method already exists |
 | Options | soft deletes, factory, seeder (+count, implies factory), run seeder now, policy file |
+| Panel | `admin` (default) or `app` (only when the customer panel is on) → resource in `app/Filament/Resources` or `app/Filament/App/Resources` |
+| Team | `belongs_to_team` (teams on + panel `app`): adds `team_id` (`constrained('teams')->cascadeOnDelete()`), `BelongsToTeam` trait, factory picks an existing team, `{camelPlural}()` hasMany appended to `Team`; generated team select/column removed from the resource. Don't add `team_id` as a field or Team as belongs-to |
 | Menu | icon (`Heroicon` case; "newspaper" → `OutlinedNewspaper`, outlined preferred), navigation group (free text ≤ 64, suggestions from existing groups), sort order (int). All optional |
 
 ### 14.2 Build order (`ModuleBuilder::build()`)
@@ -472,7 +504,7 @@ One engine (`App\Support\ModuleBuilder\ModuleBuilder`) behind the **Developer �
 2. Create migration, model, factory, seeder, policy from `stubs/` — each syntax-checked (`token_get_all(..., TOKEN_PARSE)`).
 3. Append inverse relation method (+ import) to related models; register `{Model}Seeder::class` in `DatabaseSeeder` (`$this->call([...])`). Originals backed up.
 4. `migrate --path=<this migration> --force`.
-5. `make:filament-resource {Model} --generate [--soft-deletes] --not-embedded --panel=admin --record-title-attribute=<name|title|first string>`.
+5. `make:filament-resource {Model} --generate [--soft-deletes] --not-embedded --panel=<admin|app> --record-title-attribute=<name|title|first string>`.
 6. Post-process the resource: bulk actions get `authorizeIndividualRecords()` (I10); json fields use `KeyValue` instead of `Textarea`; `$navigationIcon` / `$navigationGroup` / `$navigationSort` set from the menu input (`ModuleFiles::applyNavigation()`).
 7. **Any failure in 1–6 → rollback (I16).**
 8. Non-fatal (warnings only): run seeder (skipped with a clear message if a required related model has no factory and no rows), `PermissionSync::syncModel()`, cache refresh.
@@ -497,7 +529,7 @@ Requirements: writable `app/`, `database/`, `bootstrap/cache/`; no `--classmap-a
 
 ### 14.5 Deleting modules (`ModuleRemover` + `ModuleTrash`)
 
-Works on **any** resource registered in the admin panel — builder-made or hand-written — found by convention:
+Works on **any** resource registered in any panel (admin or app) — builder-made or hand-written — found by convention:
 
 | Part | Rule |
 |---|---|
@@ -557,3 +589,47 @@ Trash entry (`storage/app/filalaunch/trash/{Ymd_His_v}_{Model}/`): `manifest.jso
 - New gateway: implement checkout + webhook that call `Billing` (create payment with `method = <gateway>`, then `approve()`), store keys via `Settings::setGroup('billing.gateways.<key>', $values, $secretFields)`, enable its card in `BillingSettings`.
 - New plan type: add a `PlanType` case, handle it in `Plan::hasPeriod()`, `periodEnd()`, `priceLabel()` and `PlanForm` visibility closures.
 - Currency settings screen: replace `Billing::currency()` with a setting (plans store their own `currency` already).
+
+---
+
+## 16. Customer panel, teams & settings
+
+### 16.1 Panels
+
+| Setting | `/admin` | `/app` |
+|---|---|---|
+| customer panel off (default) | everyone; registration + My plan here | not registered (404) |
+| customer panel on | staff only (Super Admin or `admin.access`); no registration | login, registration, password reset, email verification, profile, MFA, My plan / Team plan |
+
+- `AppPanelProvider::register()` returns early when the panel is off, so routes don't exist.
+- `RedirectCustomersToAppPanel` is the admin panel's auth middleware: it extends Filament's `Authenticate` (Laravel always sorts auth middleware first, so a separate middleware would run too late) and redirects signed-in non-staff users to `/app`.
+- `PermissionSync` and the seeder sync every panel; `admin.access` is a kit permission (always mode "permission").
+
+### 16.2 Teams (tenancy)
+
+- Filament tenancy: `->tenant(Team::class, slugAttribute: 'slug', ownershipRelationship: 'team')`, `RegisterTeam`, `EditTeam`. URL `/app/{team-slug}/…`.
+- Tables: `teams` (name, slug, owner_id), `team_user` (role owner/admin/member), `team_invitations` (email, role, token sha256, expires_at, accepted_at). `subscriptions`, `payments`, `usage_records` have nullable `team_id`.
+- `User::getTenants()` creates a personal team if a customer has none (covers users from before teams were on). `getDefaultTenant()` = oldest membership.
+- Registration (`Register`): accept a pending invitation for the email (from `session('team_invitation')`) or create a personal team.
+- Invitation link `GET /team-invitations/{token}` → guest: store token in session, send to login (account exists) or registration (prefilled email); signed in: accept and open the team.
+- All team changes go through `App\Support\Teams\Teams` (throws `RuntimeException` with a user-facing message).
+- Team modules: `BelongsToTeam` adds a global scope (when a tenant is set) and fills `team_id` on create; Filament also scopes via the `Team::{plural}()` relation — keep both.
+
+### 16.3 Billing owner
+
+`Billing::ownerTeam()` = current team when teams on and `tenancy.billing = team`, else null. `HasSubscriptions::billableSubscriptions()` / `billablePayments()` and `planAllows()` (memoised per owner) use it, so every member of a team gets the team's plan. Only owners/admins (`Billing::canManageBilling()`) buy, renew or cancel; members see a notice on Team plan. Admin Subscriptions/Payments show a team column and filter.
+
+### 16.4 System settings
+
+| Key | Config path |
+|---|---|
+| `app_name` | `app.name` |
+| `mail_mailer`, `mail_host`, `mail_port`, `mail_username`, `mail_password` (secret), `mail_scheme`, `mail_from_address`, `mail_from_name` | `mail.*` |
+| `app_panel`, `tenancy`, `tenant_label`, `tenant_billing`, `invite_days` | `filalaunch.panels.app.enabled`, `filalaunch.tenancy.*` |
+| `currency`, `grace_days` | `filalaunch.billing.*` |
+| `builder` (auto/on/off), `trash_days` | `filalaunch.builder.mode` → `builder.enabled`, `filalaunch.builder.trash_days` |
+
+- Stored in `settings` (key `system`, JSON). Secrets: `Crypt::encryptString`, empty input keeps the saved value, never filled back into the form.
+- `SystemSettings::apply()` runs first in `AppServiceProvider::register()` (before panel providers) from `storage/app/filalaunch/settings.json`, falling back to one DB read that rebuilds the file. Works with `config:cache` (values are set at runtime).
+- After save: route/component caches refreshed (`RefreshesAppCaches`) and a full page reload, because panels and menus may change. `migrate`/`migrate:fresh` deletes the cache file (`MigrationsEnded` listener).
+- To add a setting: add a `MAP` entry (+ config default), a field on `SystemSettingsPage`, and document it here.

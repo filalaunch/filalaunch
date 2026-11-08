@@ -11,6 +11,8 @@ use App\Models\PlanMeter;
 use App\Models\Role;
 use App\Models\Setting;
 use App\Models\Subscription;
+use App\Models\Team;
+use App\Models\TeamInvitation;
 use App\Models\UsageRecord;
 use App\Models\User;
 use App\Support\ModuleBuilder\Concerns\RefreshesAppCaches;
@@ -71,6 +73,9 @@ class ModuleRemover
             UsageRecord::class,
             ModuleAccessRule::class,
             Setting::class,
+            // Teams (kit core)
+            Team::class,
+            TeamInvitation::class,
             ...config('filalaunch.builder.protected_models', []),
         ]));
     }
@@ -98,6 +103,7 @@ class ModuleRemover
                 'table' => $plan['table'],
                 'rows' => $plan['rows'],
                 'resource' => $this->relative($plan['resource_paths'][0] ?? ''),
+                'panel' => str_contains($plan['resources'][0] ?? '', '\\Filament\\App\\') ? 'app' : 'admin',
                 'files' => count($plan['delete']),
                 'edits' => count($plan['edits']),
                 'blockers' => $plan['blockers'],
@@ -593,7 +599,13 @@ class ModuleRemover
     {
         $map = [];
 
-        foreach (rescue(fn () => Filament::getPanel('admin')->getResources(), [], report: false) as $resource) {
+        // Resources of every panel (admin + customer panel when enabled).
+        $resources = collect(rescue(fn () => Filament::getPanels(), [], report: false))
+            ->flatMap(fn ($panel): array => $panel->getResources())
+            ->unique()
+            ->all();
+
+        foreach ($resources as $resource) {
             $model = rescue(fn () => $resource::getModel(), null, report: false);
 
             // Skip resources/models already deleted in this request (classes stay loaded in memory).
@@ -614,11 +626,14 @@ class ModuleRemover
     protected function resourcePaths(string $resource): array
     {
         $file = (new ReflectionClass($resource))->getFileName();
-        $resourcesDir = $this->normalise(app_path('Filament/Resources'));
         $dir = $this->normalise(dirname($file));
 
-        if ($dir !== $resourcesDir && str_starts_with($dir, $resourcesDir.'/') && substr_count(Str::after($dir, $resourcesDir.'/'), '/') === 0) {
-            return [dirname($file)];
+        foreach ([app_path('Filament/Resources'), app_path('Filament/App/Resources')] as $root) {
+            $resourcesDir = $this->normalise($root);
+
+            if ($dir !== $resourcesDir && str_starts_with($dir, $resourcesDir.'/') && substr_count(Str::after($dir, $resourcesDir.'/'), '/') === 0) {
+                return [dirname($file)];
+            }
         }
 
         $paths = [$file];

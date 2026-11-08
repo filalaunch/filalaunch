@@ -4,10 +4,11 @@ namespace App\Providers\Filament;
 
 use App\Filament\Pages\Auth\Register;
 use App\Filament\Pages\MyPlan;
+use App\Http\Middleware\RedirectCustomersToAppPanel;
 use App\Support\Permissions\PermissionSync;
+use App\Support\Teams\Teams;
 use Filament\Actions\Action;
 use Filament\Auth\MultiFactor\App\AppAuthentication;
-use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
@@ -29,21 +30,25 @@ class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        // With the customer panel on, sign-up and "My plan" move to /app and /admin is staff-only.
+        $customersHere = ! Teams::appPanelEnabled();
+
         return $panel
             ->default()
             ->id('admin')
             ->path('admin')
             ->login()
-            ->registration(Register::class)
+            ->when($customersHere, fn (Panel $panel) => $panel
+                ->registration(Register::class)
+                ->userMenuItems([
+                    'my-plan' => Action::make('myPlan')
+                        ->label('My plan')
+                        ->icon(Heroicon::OutlinedCreditCard)
+                        ->url(fn (): string => MyPlan::getUrl()),
+                ]))
             ->passwordReset()
             ->emailVerification()
             ->profile(isSimple: false)
-            ->userMenuItems([
-                'my-plan' => Action::make('myPlan')
-                    ->label('My plan')
-                    ->icon(Heroicon::OutlinedCreditCard)
-                    ->url(fn (): string => MyPlan::getUrl()),
-            ])
             ->multiFactorAuthentication([
                 AppAuthentication::make()
                     ->recoverable(),
@@ -77,7 +82,7 @@ class AdminPanelProvider extends PanelProvider
                 DispatchServingFilamentEvent::class,
             ])
             ->authMiddleware([
-                Authenticate::class,
+                RedirectCustomersToAppPanel::class, // Filament Authenticate + customers → /app
             ]);
     }
 }

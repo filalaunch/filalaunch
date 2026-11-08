@@ -53,6 +53,38 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Panels & teams
+    |--------------------------------------------------------------------------
+    |
+    | Managed in the admin panel: System → Settings (stored in the database,
+    | overrides these .env defaults). Teams require the customer panel.
+    |
+    */
+
+    'panels' => [
+        'app' => [
+            // Separate customer panel at /app; /admin becomes staff-only.
+            'enabled' => (bool) env('FILALAUNCH_APP_PANEL', false),
+            'path' => 'app',
+        ],
+    ],
+
+    'tenancy' => [
+        // Teams (multi-tenancy) in the customer panel: /app/{team}/…
+        'enabled' => (bool) env('FILALAUNCH_TENANCY', false),
+
+        // What a tenant is called in the UI: Team, Workspace, Organization…
+        'label' => env('FILALAUNCH_TENANT_LABEL', 'Team'),
+
+        // team = the team subscribes and every member gets the plan; user = each user subscribes.
+        'billing' => env('FILALAUNCH_TENANT_BILLING', 'team'),
+
+        // Days an email invitation link stays valid.
+        'invite_days' => (int) env('FILALAUNCH_INVITE_DAYS', 7),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Billing
     |--------------------------------------------------------------------------
     |
@@ -88,6 +120,9 @@ return [
 
     'builder' => [
         'enabled' => (bool) env('FILALAUNCH_BUILDER_ENABLED', env('APP_ENV', 'production') === 'local'),
+
+        // auto = on only when APP_ENV=local · on · off (System → Settings).
+        'mode' => 'auto',
 
         // Models that the Modules page never lists or deletes (User, Role and Permission are always protected).
         'protected_models' => [

@@ -6,6 +6,7 @@ use App\Enums\PaymentKind;
 use App\Enums\PaymentStatus;
 use App\Models\Payment;
 use App\Support\Billing\Billing;
+use App\Support\Teams\Teams;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Textarea;
 use Filament\Infolists\Components\TextEntry;
@@ -23,7 +24,7 @@ class PaymentsTable
     {
         return $table
             // Pending first, newest first.
-            ->modifyQueryUsing(fn (Builder $query) => $query->with(['user', 'plan', 'reviewer'])
+            ->modifyQueryUsing(fn (Builder $query) => $query->with(['user', 'plan', 'reviewer', 'team'])
                 ->orderByRaw("case when status = 'pending' then 0 else 1 end")
                 ->latest())
             ->columns([
@@ -35,6 +36,10 @@ class PaymentsTable
                     ->label('User')
                     ->description(fn (Payment $record): string => (string) $record->user?->email)
                     ->searchable(['name', 'email']),
+                TextColumn::make('team.name')
+                    ->label(Teams::label())
+                    ->placeholder('Personal')
+                    ->visible(Teams::enabled()),
                 TextColumn::make('plan.name')
                     ->label('Plan')
                     ->description(fn (Payment $record): string => $record->kind->getLabel()),

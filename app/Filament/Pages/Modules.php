@@ -7,6 +7,7 @@ use App\Support\ModuleBuilder\ModuleBuilder as Builder;
 use App\Support\ModuleBuilder\ModuleBuilderException;
 use App\Support\ModuleBuilder\ModuleRemover;
 use App\Support\ModuleBuilder\ModuleTrash;
+use App\Support\Teams\Teams;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\TextInput;
@@ -74,6 +75,11 @@ class Modules extends Page implements HasTable
                     ->description(fn (array $record): string => $record['model']),
                 TextColumn::make('table')
                     ->fontFamily('mono'),
+                TextColumn::make('panel')
+                    ->badge()
+                    ->color(fn (string $state): string => $state === 'app' ? 'info' : 'gray')
+                    ->formatStateUsing(fn (string $state): string => $state === 'app' ? 'Customer' : 'Admin')
+                    ->visible(fn (): bool => Teams::appPanelEnabled()),
                 TextColumn::make('rows')
                     ->numeric()
                     ->placeholder('—'),

@@ -21,6 +21,10 @@ class ModuleFiles
         $d = $this->definition;
         $lines = [];
 
+        if ($d->belongsToTeam) {
+            $lines[] = "            \$table->foreignId('team_id')->constrained('teams')->cascadeOnDelete();";
+        }
+
         foreach ($d->fields as $field) {
             $column = match ($field['type']) {
                 'decimal' => "\$table->decimal('{$field['name']}', 10, 2)",
@@ -87,7 +91,13 @@ class ModuleFiles
             $traits[] = 'SoftDeletes';
         }
 
-        $fillable = collect($d->fields)->pluck('name')
+        if ($d->belongsToTeam) {
+            $imports[] = 'App\\Models\\Concerns\\BelongsToTeam';
+            $traits[] = 'BelongsToTeam';
+        }
+
+        $fillable = collect($d->belongsToTeam ? ['team_id'] : [])
+            ->merge(collect($d->fields)->pluck('name'))
             ->merge(collect($d->relations)->map(fn (array $r): string => ModuleDefinition::foreignKey($r['related'])))
             ->map(fn (string $column): string => "        '{$column}',")
             ->implode("\n");
@@ -148,6 +158,11 @@ class ModuleFiles
         $d = $this->definition;
         $imports = ["App\\Models\\{$d->model}", 'Illuminate\\Database\\Eloquent\\Factories\\Factory'];
         $lines = [];
+
+        if ($d->belongsToTeam) {
+            $imports[] = 'App\\Models\\Team';
+            $lines[] = "            'team_id' => fn () => Team::query()->inRandomOrder()->value('id'),";
+        }
 
         foreach ($d->fields as $field) {
             $lines[] = "            '{$field['name']}' => ".$this->fakerFor($field).',';
@@ -282,6 +297,26 @@ class ModuleFiles
         }
 
         return preg_replace_callback($iconLine, fn (array $m): string => $m[0].$extra, $source, 1);
+    }
+
+    /**
+     * Team-owned resources: the team is set by the panel, so drop the generated team select/column.
+     */
+    public function removeTeamFields(string $source): string
+    {
+        $source = preg_replace([
+            "/^[ \t]*Select::make\('team_id'\)(?:\R[ \t]*->[^\r\n]*)*,\R/m",
+            "/^[ \t]*TextColumn::make\('team\.name'\)(?:\R[ \t]*->[^\r\n]*)*,\R/m",
+            "/^[ \t]*TextColumn::make\('team_id'\)(?:\R[ \t]*->[^\r\n]*)*,\R/m",
+        ], '', $source);
+
+        foreach (['Filament\\Forms\\Components\\Select' => 'Select::', 'Filament\\Tables\\Columns\\TextColumn' => 'TextColumn::'] as $class => $usage) {
+            if (! str_contains($source, $usage)) {
+                $source = preg_replace('/^use '.preg_quote($class, '/').';\R/m', '', $source);
+            }
+        }
+
+        return $source;
     }
 
     /**

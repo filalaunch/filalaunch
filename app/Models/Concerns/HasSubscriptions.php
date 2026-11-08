@@ -10,6 +10,8 @@ use App\Models\Plan;
 use App\Models\PlanMeter;
 use App\Models\Subscription;
 use App\Models\UsageRecord;
+use App\Support\Billing\Billing;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
@@ -25,8 +27,8 @@ use Illuminate\Support\Facades\DB;
  */
 trait HasSubscriptions
 {
-    /** @var list<string>|null */
-    protected ?array $planPermissionCache = null;
+    /** @var array<string, list<string>> plan permission names per billing owner */
+    protected array $planPermissionCache = [];
 
     public function subscriptions(): HasMany
     {
@@ -38,9 +40,31 @@ trait HasSubscriptions
         return $this->hasMany(Payment::class);
     }
 
-    public function activeSubscriptions(): HasMany
+    /**
+     * Subscriptions that count for this user right now: the current team's (team billing)
+     * or the user's own.
+     */
+    public function billableSubscriptions(): Builder
     {
-        return $this->subscriptions()->active();
+        $team = Billing::ownerTeam();
+
+        return $team
+            ? Subscription::query()->where('team_id', $team->getKey())
+            : Subscription::query()->where('user_id', $this->getKey())->whereNull('team_id');
+    }
+
+    public function billablePayments(): Builder
+    {
+        $team = Billing::ownerTeam();
+
+        return $team
+            ? Payment::query()->where('team_id', $team->getKey())
+            : Payment::query()->where('user_id', $this->getKey())->whereNull('team_id');
+    }
+
+    public function activeSubscriptions(): Builder
+    {
+        return $this->billableSubscriptions()->active();
     }
 
     /**
@@ -65,7 +89,9 @@ trait HasSubscriptions
      */
     public function planPermissionNames(): array
     {
-        return $this->planPermissionCache ??= rescue(fn () => DB::table('plan_permission')
+        $owner = Billing::ownerTeam()?->getKey() ? 'team-'.Billing::ownerTeam()->getKey() : 'user';
+
+        return $this->planPermissionCache[$owner] ??= rescue(fn () => DB::table('plan_permission')
             ->join('permissions', 'permissions.id', '=', 'plan_permission.permission_id')
             ->whereIn('plan_permission.plan_id', $this->activeSubscriptions()->select('plan_id'))
             ->distinct()
@@ -80,7 +106,7 @@ trait HasSubscriptions
 
     public function flushPlanCache(): void
     {
-        $this->planPermissionCache = null;
+        $this->planPermissionCache = [];
     }
 
     // ── Usage meters ─────────────────────────────────────────────────
@@ -113,6 +139,7 @@ trait HasSubscriptions
 
         UsageRecord::query()->create([
             'user_id' => $this->id,
+            'team_id' => Billing::ownerTeam()?->getKey(),
             'meter_id' => $usage['meter']->id,
             'subscription_id' => $usage['subscription_id'],
             'quantity' => $quantity,
@@ -188,8 +215,10 @@ trait HasSubscriptions
             MeterReset::Never => null,
         };
 
+        $team = Billing::ownerTeam();
+
         $used = (int) UsageRecord::query()
-            ->where('user_id', $this->id)
+            ->when($team, fn ($q) => $q->where('team_id', $team->getKey()), fn ($q) => $q->where('user_id', $this->id)->whereNull('team_id'))
             ->where('meter_id', $meter->id)
             ->when($since, fn ($query) => $query->where('recorded_at', '>=', $since))
             ->sum('quantity');

@@ -8,8 +8,10 @@ use App\Models\Plan;
 use App\Models\Subscription;
 use App\Support\Billing\Billing;
 use App\Support\Billing\Money;
+use App\Support\Teams\Teams;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Facades\Filament;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -38,9 +40,23 @@ class MyPlan extends Page
     /** Payment reference generated when the bank-transfer modal opens (server-side, not trusted from the form). */
     public ?string $reference = null;
 
+    /**
+     * Every signed-in user — in /app when the customer panel is on, otherwise in /admin.
+     */
     public static function canAccess(): bool
     {
-        return auth()->check();
+        if (! auth()->check()) {
+            return false;
+        }
+
+        $panel = rescue(fn () => Filament::getCurrentPanel()?->getId(), null, report: false);
+
+        return Teams::appPanelEnabled() ? $panel === 'app' : $panel !== 'app';
+    }
+
+    public function getTitle(): string
+    {
+        return ($team = Billing::ownerTeam()) ? "{$team->name} plan" : 'My plan';
     }
 
     /**
@@ -51,10 +67,10 @@ class MyPlan extends Page
         $user = auth()->user();
         $billing = app(Billing::class);
 
-        $subscriptions = $user->subscriptions()
+        $subscriptions = $user->billableSubscriptions()
             ->with('plan')
             ->where(fn ($query) => $query
-                ->whereIn('id', $user->subscriptions()->active()->select('id'))
+                ->whereIn('id', $user->activeSubscriptions()->select('id'))
                 ->orWhere('status', SubscriptionStatus::Pending->value)
                 ->orWhere(fn ($q) => $q->whereNotNull('ends_at')->where('ends_at', '>', now()->subDays(30))->where('status', '!=', SubscriptionStatus::Canceled->value)))
             ->latest('id')
@@ -65,7 +81,9 @@ class MyPlan extends Page
         return [
             'subscriptions' => $subscriptions,
             'plans' => Plan::query()->available()->whereNotIn('id', $held)->get(),
-            'payments' => $user->payments()->with('plan')->latest()->limit(20)->get(),
+            'payments' => $user->billablePayments()->with('plan')->latest()->limit(20)->get(),
+            'canManage' => $billing->canManageBilling($user),
+            'team' => Billing::ownerTeam(),
             'usage' => $user->usageSummary(),
             'bankAvailable' => $billing->bankTransferAvailable(),
             'billing' => $billing,
@@ -181,7 +199,7 @@ class MyPlan extends Page
 
     protected function subscription(array $arguments): Subscription
     {
-        return auth()->user()->subscriptions()->with('plan')->findOrFail($arguments['subscription'] ?? null);
+        return auth()->user()->billableSubscriptions()->with('plan')->findOrFail($arguments['subscription'] ?? null);
     }
 
     protected function planFromArguments(array $arguments): Plan

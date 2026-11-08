@@ -2,6 +2,8 @@
 
 namespace App\Support\ModuleBuilder;
 
+use App\Models\Team;
+use App\Support\Teams\Teams;
 use Filament\Facades\Filament;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Model;
@@ -62,6 +64,8 @@ final class ModuleDefinition
         public readonly ?string $navigationIcon = null,
         public readonly ?string $navigationGroup = null,
         public readonly ?int $navigationSort = null,
+        public readonly string $panel = 'admin',
+        public readonly bool $belongsToTeam = false,
     ) {}
 
     /**
@@ -114,6 +118,8 @@ final class ModuleDefinition
             navigationIcon: filled($data['navigation_icon'] ?? null) ? (self::iconCase((string) $data['navigation_icon']) ?? (string) $data['navigation_icon']) : null,
             navigationGroup: filled($data['navigation_group'] ?? null) ? trim((string) $data['navigation_group']) : null,
             navigationSort: filled($data['navigation_sort'] ?? null) && is_numeric($data['navigation_sort']) ? (int) $data['navigation_sort'] : null,
+            panel: ($data['panel'] ?? 'admin') === 'app' ? 'app' : 'admin',
+            belongsToTeam: (bool) ($data['belongs_to_team'] ?? false),
         );
     }
 
@@ -242,6 +248,20 @@ final class ModuleDefinition
     /**
      * Column used to label records in the UI: "name" / "title", else the first string field.
      */
+    /**
+     * Resource folder for the chosen panel.
+     */
+    public function resourceDir(): string
+    {
+        return app_path(($this->panel === 'app' ? 'Filament/App/Resources/' : 'Filament/Resources/').$this->pluralStudly());
+    }
+
+    public function resourceClass(): string
+    {
+        return ($this->panel === 'app' ? 'App\\Filament\\App\\Resources\\' : 'App\\Filament\\Resources\\')
+            .$this->pluralStudly().'\\'.$this->model.'Resource';
+    }
+
     public function titleAttribute(): ?string
     {
         $strings = collect($this->fields)->where('type', 'string')->pluck('name');
@@ -273,7 +293,7 @@ final class ModuleDefinition
 
         $paths = [
             app_path("Models/{$this->model}.php") => "Model [{$this->modelFqcn()}] already exists.",
-            app_path("Filament/Resources/{$this->pluralStudly()}") => "Filament resource folder [app/Filament/Resources/{$this->pluralStudly()}] already exists.",
+            $this->resourceDir() => 'Filament resource folder ['.str_replace(base_path().'/', '', $this->resourceDir()).'] already exists.',
         ];
 
         if ($this->factory) {
@@ -348,6 +368,23 @@ final class ModuleDefinition
                 } elseif ($field['type'] === 'boolean' && ! in_array(strtolower($field['default']), ['true', 'false', '1', '0'], true)) {
                     $errors[] = "Field [{$name}]: default must be true or false.";
                 }
+            }
+        }
+
+        // Panel & team ownership
+        if ($this->panel === 'app' && ! Teams::appPanelEnabled()) {
+            $errors[] = 'The customer panel is off — turn it on in System → Settings, or build into the admin panel.';
+        }
+
+        if ($this->belongsToTeam) {
+            if (! Teams::enabled() || $this->panel !== 'app') {
+                $errors[] = 'Team ownership needs teams turned on and the customer panel selected.';
+            } elseif (method_exists(Team::class, $this->inverseMethod('has_many'))) {
+                $errors[] = 'The '.Teams::label().' model already has a '.$this->inverseMethod('has_many').'() method.';
+            }
+
+            if (in_array('team_id', array_column($this->fields, 'name'), true) || collect($this->relations)->contains('related', Team::class)) {
+                $errors[] = 'team_id is added automatically for team-owned modules — remove it from fields / belongs-to.';
             }
         }
 

@@ -7,10 +7,16 @@
 @endphp
 
 <x-filament-panels::page>
+    @if ($team && ! $canManage)
+        <x-filament::section>
+            <p style="{{ $muted }}">Plans for <strong>{{ $team->name }}</strong> are managed by its owners and admins. You get the plan's access as a member.</p>
+        </x-filament::section>
+    @endif
+
     {{-- Current plans --}}
     <x-filament::section heading="Your plans" icon="heroicon-o-check-badge">
         @if ($subscriptions->isEmpty())
-            <p style="{{ $muted }}">You don't have a plan yet — choose one below.</p>
+            <p style="{{ $muted }}">{{ $team ? 'No plan yet'.($canManage ? ' — choose one below.' : '.') : "You don't have a plan yet — choose one below." }}</p>
         @else
             <div style="{{ $grid }}">
                 @foreach ($subscriptions as $subscription)
@@ -43,10 +49,10 @@
                         @endif
 
                         <div style="display:flex;gap:.75rem;align-items:center;margin-top:auto;padding-top:.25rem">
-                            @if ($subscription->canRenew() && $bankAvailable)
+                            @if ($canManage && $subscription->canRenew() && $bankAvailable)
                                 {{ ($this->renewAction)(['subscription' => $subscription->id]) }}
                             @endif
-                            @if (in_array($subscription->status, [SubscriptionStatus::Active, SubscriptionStatus::Trialing], true) && $subscription->isActive())
+                            @if ($canManage && in_array($subscription->status, [SubscriptionStatus::Active, SubscriptionStatus::Trialing], true) && $subscription->isActive())
                                 {{ ($this->cancelAction)(['subscription' => $subscription->id]) }}
                             @endif
                         </div>
@@ -111,7 +117,9 @@
                             </ul>
                         @endif
                         <div style="margin-top:auto;padding-top:.5rem">
-                            @if ($billing->startsWithoutPayment(auth()->user(), $plan))
+                            @if (! $canManage)
+                                <span style="{{ $muted }}">Ask an owner or admin to choose a plan.</span>
+                            @elseif ($billing->startsWithoutPayment(auth()->user(), $plan))
                                 {{ ($this->startAction)(['plan' => $plan->id]) }}
                             @elseif ($bankAvailable)
                                 {{ ($this->payAction)(['plan' => $plan->id]) }}

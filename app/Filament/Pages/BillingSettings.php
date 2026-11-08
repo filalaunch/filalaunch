@@ -70,7 +70,7 @@ class BillingSettings extends Page
                             ->required()
                             ->minItems(1)
                             ->columns(3),
-                        Text::make('Currency: '.Billing::currency().' (set FILALAUNCH_CURRENCY in .env) · Grace period: '.Billing::graceDays().' days after a period ends.'),
+                        Text::make('Currency: '.Billing::currency().' (change in System → Settings) · Grace period: '.Billing::graceDays().' days after a period ends.'),
                     ]),
 
                 Section::make('Bank transfer')

@@ -12,7 +12,7 @@ use Illuminate\Support\Str;
 class Payment extends Model
 {
     protected $fillable = [
-        'reference', 'user_id', 'plan_id', 'subscription_id', 'kind', 'amount', 'currency', 'method',
+        'reference', 'user_id', 'team_id', 'plan_id', 'subscription_id', 'kind', 'amount', 'currency', 'method',
         'status', 'transaction_id', 'proof_path', 'note', 'review_note', 'reviewed_by', 'reviewed_at',
     ];
 
@@ -29,6 +29,11 @@ class Payment extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function team(): BelongsTo
+    {
+        return $this->belongsTo(Team::class);
     }
 
     public function plan(): BelongsTo

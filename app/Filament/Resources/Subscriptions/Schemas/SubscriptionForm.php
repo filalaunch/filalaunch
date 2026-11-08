@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Subscriptions\Schemas;
 
 use App\Enums\SubscriptionStatus;
 use App\Models\Plan;
+use App\Support\Teams\Teams;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Select;
 use Filament\Schemas\Components\Section;
@@ -31,6 +32,14 @@ class SubscriptionForm
                             ->preload()
                             ->required()
                             ->disabledOn('edit'),
+                        Select::make('team_id')
+                            ->label(Teams::label())
+                            ->relationship('team', 'name')
+                            ->searchable()
+                            ->preload()
+                            ->placeholder('Personal (billed to the user)')
+                            ->helperText('Team billing: every member gets this plan.')
+                            ->visible(Teams::enabled()),
                         Select::make('plan_id')
                             ->label('Plan')
                             ->relationship('plan', 'name')

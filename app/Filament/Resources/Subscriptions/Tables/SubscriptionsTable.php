@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Subscriptions\Tables;
 use App\Enums\SubscriptionStatus;
 use App\Filament\Resources\Subscriptions\Actions\SubscriptionActions;
 use App\Models\Subscription;
+use App\Support\Teams\Teams;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
@@ -19,12 +20,17 @@ class SubscriptionsTable
     {
         return $table
             ->defaultSort('created_at', 'desc')
-            ->modifyQueryUsing(fn (Builder $query) => $query->with(['user', 'plan']))
+            ->modifyQueryUsing(fn (Builder $query) => $query->with(['user', 'plan', 'team']))
             ->columns([
                 TextColumn::make('user.name')
                     ->label('User')
                     ->description(fn (Subscription $record): string => (string) $record->user?->email)
                     ->searchable(['name', 'email']),
+                TextColumn::make('team.name')
+                    ->label(Teams::label())
+                    ->placeholder('Personal')
+                    ->visible(Teams::enabled())
+                    ->searchable(),
                 TextColumn::make('plan.name')
                     ->label('Plan')
                     ->description(fn (Subscription $record): string => (string) $record->plan?->priceLabel()),
@@ -52,6 +58,11 @@ class SubscriptionsTable
                     ->preload(),
                 SelectFilter::make('status')
                     ->options(SubscriptionStatus::class),
+                SelectFilter::make('team')
+                    ->label(Teams::label())
+                    ->relationship('team', 'name')
+                    ->searchable()
+                    ->visible(Teams::enabled()),
                 TernaryFilter::make('active')
                     ->label('Grants access now')
                     ->queries(

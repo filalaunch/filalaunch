@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Users\Tables;
 
 use App\Filament\Resources\Users\Actions\ResetTwoFactorAction;
 use App\Models\User;
+use App\Support\Teams\Teams;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
@@ -14,13 +15,14 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Str;
 
 class UsersTable
 {
     public static function configure(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(fn ($query) => $query->with('roles'))
+            ->modifyQueryUsing(fn ($query) => $query->with(Teams::enabled() ? ['roles', 'teams'] : ['roles']))
             ->defaultSort('created_at', 'desc')
             ->columns([
                 TextColumn::make('name')
@@ -40,6 +42,15 @@ class UsersTable
                         config('filalaunch.roles.admin') => 'warning',
                         default => 'gray',
                     }),
+
+                TextColumn::make('teams.name')
+                    ->label(fn (): string => Str::plural(Teams::label()))
+                    ->badge()
+                    ->color('info')
+                    ->limitList(2)
+                    ->expandableLimitedList()
+                    ->placeholder('—')
+                    ->visible(fn (): bool => Teams::enabled()),
 
                 IconColumn::make('email_verified_at')
                     ->label('Verified')

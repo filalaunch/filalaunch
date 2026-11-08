@@ -42,6 +42,8 @@
 - [Module Builder](#module-builder)
 - [Deleting modules](#deleting-modules)
 - [Plans & billing](#plans--billing)
+- [Customer panel & teams](#customer-panel--teams)
+- [Settings](#settings)
 - [Queues](#queues)
 - [Configuration](#configuration)
 - [Useful commands](#useful-commands)
@@ -106,6 +108,17 @@ Generate a complete CRUD module from a form or one command — **migration, mode
 - **Offline bank transfer** with required receipt upload and admin approve/reject; Stripe, PayPal, Razorpay, Cashfree, Kelviq and Polar.sh listed as *coming soon*.
 - **Usage meters** — `$user->recordUsage('api_calls')`, included quantities, block or overage at the limit.
 - **My plan** page for every user: current plans, usage bars, choose/renew/cancel, payment history.
+
+### Customer panel & teams (optional, off by default)
+
+- **Customer panel at `/app`** — one switch moves customers out of `/admin`, which becomes staff-only.
+- **Teams** (Filament tenancy, single database) — personal team on sign-up, team switcher, email invitations, owner/admin/member roles, ownership transfer. Call them Team, Workspace, Organization…
+- **Team billing** — owners buy a plan once, every member gets its access (or switch to per-user billing).
+- **Module Builder knows teams** — tick *Belongs to team* and the new module's rows are isolated per team automatically.
+
+### Settings (`System` menu, Super Admin only)
+
+- App name, mail (log or SMTP, with a test email), customer panel & teams, currency, grace period, Module Builder mode, trash days — **no `.env` editing needed**. SMTP password stored encrypted.
 
 ### Built-in safety rules
 
@@ -202,6 +215,61 @@ storage/logs/laravel.log
 ```
 
 To send real emails, set `MAIL_MAILER` and the related `MAIL_*` values in `.env`.
+
+---
+
+## Customer panel & teams
+
+Everything here is optional and switched on under **System → Settings → Customers & teams**. Three setups:
+
+| Setup | Customers sign in at | Who uses `/admin` |
+|---|---|---|
+| Default (both off) | `/admin` | everyone (content gated by permissions) |
+| Customer panel on | `/app` | staff only |
+| Customer panel + teams | `/app/{team}` | staff only |
+
+**Staff** = Super Admin, or anyone with the `admin.access` permission (the seeded `admin` role has it). Everyone else who opens `/admin` is sent to `/app`.
+
+### Teams
+
+- Every new customer gets a personal team ("Alice's Team"). They can create more from the team switcher.
+- **Team settings** (team switcher → *Team settings*): rename, invite by email, change roles, remove members, transfer ownership, leave, delete.
+- Roles: **Owner** (one per team), **Admin** (manage members, invitations and billing), **Member** (uses the team's modules).
+- Invitation links are single-use, stored hashed, and expire (7 days by default). A new user who opens the link signs up with the invited email and joins that team instead of getting a personal one.
+- Staff see all teams under **Access Control → Teams**.
+
+### Team modules
+
+In the Module Builder pick **Panel: Customer panel** and tick **Belongs to team** (or `--panel=app --team` on the CLI). The module gets a `team_id` column and the `BelongsToTeam` trait: queries only return the current team's rows and new rows are assigned to it. Hand-written models can use the trait too:
+
+```php
+use App\Models\Concerns\BelongsToTeam;
+
+class Project extends Model
+{
+    use BelongsToTeam; // + team_id column, + projects() hasMany on Team
+}
+```
+
+### Billing with teams
+
+With **Who buys plans? → The team** (default), plans on *Team plan* belong to the current team: owners and admins buy and renew, all members get the plan's access. With **Each user**, every user buys their own plan as before.
+
+---
+
+## Settings
+
+**System → Settings** (Super Admin) holds everything a kit user would otherwise put in `.env`:
+
+| Tab | Settings |
+|---|---|
+| General | App name |
+| Mail | Log only / SMTP (host, port, username, password, encryption), sender address and name, **Send test email** |
+| Customers & teams | Customer panel, teams, what to call a team, invitation expiry, who buys plans |
+| Billing | Default currency, grace period |
+| Developer | Module Builder (automatic / always on / always off), trash days |
+
+Saved values are stored in the database (secrets encrypted with `APP_KEY`) and mirrored to `storage/app/filalaunch/settings.json`, which is read at boot — no extra query per request. They override `.env`; `.env` values are only the starting defaults. `APP_KEY`, `APP_ENV`, `APP_DEBUG`, `APP_URL` and the database connection stay in `.env`.
 
 ---
 
@@ -501,7 +569,7 @@ Define meters under **Billing → Usage meters** (reset monthly, per billing cyc
 
 ## Configuration
 
-All FilaLaunch settings live in `config/filalaunch.php`.
+Day-to-day settings are managed in **System → Settings** (see [Settings](#settings)). The `.env` keys below are optional starting defaults; all FilaLaunch defaults live in `config/filalaunch.php`.
 
 | `.env` key | Default | Purpose |
 |---|---|---|
@@ -512,6 +580,11 @@ All FilaLaunch settings live in `config/filalaunch.php`.
 | `FILALAUNCH_TRASH_DAYS` | `7` | Days deleted modules stay in the trash (`0` = no trash) |
 | `FILALAUNCH_CURRENCY` | `USD` | Currency for plans and payments |
 | `FILALAUNCH_GRACE_DAYS` | `3` | Days access continues after a period ends (time to renew) |
+| `FILALAUNCH_APP_PANEL` | `false` | Customer panel at `/app` |
+| `FILALAUNCH_TENANCY` | `false` | Teams (turns the customer panel on) |
+| `FILALAUNCH_TENANT_LABEL` | `Team` | What a team is called |
+| `FILALAUNCH_TENANT_BILLING` | `team` | `team` or `user` — who buys plans |
+| `FILALAUNCH_INVITE_DAYS` | `7` | Invitation expiry |
 
 | `config/filalaunch.php` key | Default | Purpose |
 |---|---|---|
@@ -578,6 +651,10 @@ app/
 │   ├── Pages/Modules.php                         # Modules page (list, delete)
 │   ├── Pages/MyPlan.php                          # customer plan page (user menu)
 │   ├── Pages/AccessRules.php, BillingSettings.php
+│   ├── Pages/SystemSettingsPage.php              # System → Settings
+│   ├── App/Resources/                            # customer panel resources (builder output)
+│   ├── App/Tenancy/RegisterTeam.php, EditTeam.php # create team, team settings + members
+│   ├── Resources/Teams/                          # staff view of all teams
 │   ├── Resources/Plans, Subscriptions, Payments, Meters
 │   ├── Widgets/ModuleTrashWidget.php             # Trash list + restore (on Modules page)
 │   ├── Resources/
@@ -591,11 +668,14 @@ app/
 ├── Policies/               ResourcePolicy (base), DefaultPolicy (fallback),
 │                           UserPolicy, RolePolicy, PermissionPolicy
 ├── Providers/
-│   ├── AppServiceProvider.php                    # Super Admin gate + default policy
-│   └── Filament/AdminPanelProvider.php           # panel + auth features
+│   ├── AppServiceProvider.php                    # settings, Super Admin gate, default policy
+│   ├── Filament/AdminPanelProvider.php           # /admin panel + auth features
+│   └── Filament/AppPanelProvider.php             # optional /app customer panel (+ teams)
 └── Support/
     ├── Billing/                                  # Billing (lifecycle), ModuleAccess, Money
     ├── Settings.php                              # settings stored in the database
+    ├── SystemSettings.php                        # System → Settings, applied at boot
+    ├── Teams/Teams.php                           # teams, members, invitations
     ├── ModuleBuilder/                            # Module Builder, remover, trash
     └── Permissions/PermissionSync.php            # permission generator
 config/filalaunch.php                             # kit settings
@@ -627,6 +707,7 @@ FilaLaunch is built in small, tested steps.
 - [x] **Step 3** — Module Builder: generate migration, model, factory, seeder and resource from the panel or CLI
 - [x] **Step 4** — Modules page: delete any module completely, with trash and one-click restore
 - [x] **Step 5** — Plans & subscriptions: one-time, subscription and usage-based plans, plan-based access rules, bank transfer, usage meters, My plan
+- [x] **Step 6** — Optional customer panel (`/app`), teams with invitations and team billing, team-aware Module Builder, System → Settings
 - [ ] Online payment gateways (Stripe, PayPal, Razorpay, Cashfree, Kelviq, Polar.sh)
 - [ ] More modules — follow progress and release notes at **[filalaunch.com](https://filalaunch.com)**
 

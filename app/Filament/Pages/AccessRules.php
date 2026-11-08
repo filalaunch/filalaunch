@@ -92,7 +92,7 @@ class AccessRules extends Page implements HasTable
         $kit = ModuleAccess::kitPrefixes();
         $modules = [];
 
-        foreach (Filament::getPanel('admin')->getResources() as $resource) {
+        foreach (collect(Filament::getPanels())->flatMap(fn ($panel): array => $panel->getResources())->unique() as $resource) {
             $model = $resource::getModel();
 
             if (in_array($model, ModuleRemover::protectedModels(), true)) {

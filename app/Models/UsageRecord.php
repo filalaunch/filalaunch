@@ -9,7 +9,7 @@ class UsageRecord extends Model
 {
     public $timestamps = false;
 
-    protected $fillable = ['user_id', 'meter_id', 'subscription_id', 'quantity', 'recorded_at'];
+    protected $fillable = ['user_id', 'team_id', 'meter_id', 'subscription_id', 'quantity', 'recorded_at'];
 
     protected function casts(): array
     {

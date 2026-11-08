@@ -2,8 +2,10 @@
 
 namespace App\Support\ModuleBuilder;
 
+use App\Models\Team;
 use App\Support\ModuleBuilder\Concerns\RefreshesAppCaches;
 use App\Support\Permissions\PermissionSync;
+use App\Support\Teams\Teams;
 use Filament\Facades\Filament;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Filesystem\Filesystem;
@@ -84,7 +86,11 @@ class ModuleBuilder
             $d->navigationSort !== null ? "sort {$d->navigationSort}" : null,
         ]);
 
-        $steps[] = "Create Filament resource app/Filament/Resources/{$d->pluralStudly()}".($menu ? ' (menu: '.implode(', ', $menu).')' : '');
+        if ($d->belongsToTeam) {
+            $steps[] = 'Add '.$d->inverseMethod('has_many').'() to app/Models/Team.php — rows belong to a '.strtolower(Teams::label()).' and are only visible inside it';
+        }
+
+        $steps[] = 'Create Filament resource '.str_replace(base_path().'/', '', $d->resourceDir()).($d->panel === 'app' ? ' (customer panel)' : '').($menu ? ' (menu: '.implode(', ', $menu).')' : '');
 
         if ($d->seeder && $d->runSeeder) {
             $steps[] = "Seed {$d->seedCount} fake records";
@@ -139,6 +145,10 @@ class ModuleBuilder
             }
 
             // 2. Inverse relationships on existing models
+            if ($d->belongsToTeam) {
+                $this->modify(app_path('Models/Team.php'), fn (string $source): string => $render->addInverseRelation($source, 'has_many'));
+            }
+
             foreach ($d->relations as $relation) {
                 if ($relation['inverse'] !== 'none') {
                     $path = app_path('Models/'.class_basename($relation['related']).'.php');
@@ -171,7 +181,7 @@ class ModuleBuilder
             $this->migratedTable = $d->table();
 
             // 5. Filament resource (form + table generated from the new table)
-            $resourceDir = app_path("Filament/Resources/{$d->pluralStudly()}");
+            $resourceDir = $d->resourceDir();
             $this->created[] = $resourceDir;
 
             $exitCode = Artisan::call('make:filament-resource', array_filter([
@@ -179,12 +189,12 @@ class ModuleBuilder
                 '--generate' => true,
                 '--soft-deletes' => $d->softDeletes,
                 '--not-embedded' => true,
-                '--panel' => 'admin',
+                '--panel' => $d->panel,
                 '--record-title-attribute' => $d->titleAttribute(),
                 '--no-interaction' => true,
             ]));
 
-            $resourceClass = "App\\Filament\\Resources\\{$d->pluralStudly()}\\{$d->model}Resource";
+            $resourceClass = $d->resourceClass();
             $resourceFile = "{$resourceDir}/{$d->model}Resource.php";
 
             if ($exitCode !== 0 || ! $this->files->exists($resourceFile)) {
@@ -192,6 +202,11 @@ class ModuleBuilder
             }
 
             $this->tweak("{$resourceDir}/Tables/{$d->pluralStudly()}Table.php", fn (string $s): string => $render->hardenTable($s));
+
+            if ($d->belongsToTeam) {
+                $this->tweak("{$resourceDir}/Tables/{$d->pluralStudly()}Table.php", fn (string $s): string => $render->removeTeamFields($s));
+                $this->tweak("{$resourceDir}/Schemas/{$d->model}Form.php", fn (string $s): string => $render->removeTeamFields($s));
+            }
             $this->tweak("{$resourceDir}/Schemas/{$d->model}Form.php", fn (string $s): string => $render->adjustForm($s));
             $this->tweak($resourceFile, fn (string $s): string => $render->applyNavigation($s));
         } catch (Throwable $e) {
@@ -226,7 +241,7 @@ class ModuleBuilder
             'created' => array_map(fn (string $path): string => $this->relative($path), $this->created),
             'modified' => array_map(fn (string $path): string => $this->relative($path), array_keys($this->backups)),
             'warnings' => $warnings,
-            'url' => $this->resourceUrl($resourceClass),
+            'url' => $this->resourceUrl($resourceClass, $d->panel),
         ];
     }
 
@@ -235,6 +250,10 @@ class ModuleBuilder
      */
     protected function seedBlocker(ModuleDefinition $d): ?string
     {
+        if ($d->belongsToTeam && ! Team::query()->exists()) {
+            return "Seeding skipped: there are no teams yet. Create one, then run `php artisan db:seed --class={$d->model}Seeder`.";
+        }
+
         foreach ($d->relations as $relation) {
             $related = $relation['related'];
             $usesFactory = $related !== config('auth.providers.users.model')
@@ -335,10 +354,15 @@ class ModuleBuilder
         return $this->refreshAppCaches(array_filter($this->created, fn (string $path): bool => $this->files->isFile($path)));
     }
 
-    protected function resourceUrl(string $resourceClass): ?string
+    protected function resourceUrl(string $resourceClass, string $panel = 'admin'): ?string
     {
         try {
-            return url(Filament::getPanel('admin')->getPath().'/'.$resourceClass::getSlug());
+            // Team panels need a team in the URL — open the panel and let it pick the user's team.
+            if ($panel === 'app' && Teams::enabled()) {
+                return url(Filament::getPanel('app')->getPath());
+            }
+
+            return url(Filament::getPanel($panel)->getPath().'/'.$resourceClass::getSlug());
         } catch (Throwable) {
             return null;
         }

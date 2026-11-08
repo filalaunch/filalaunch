@@ -9,8 +9,10 @@ use App\Enums\SubscriptionStatus;
 use App\Models\Payment;
 use App\Models\Plan;
 use App\Models\Subscription;
+use App\Models\Team;
 use App\Models\User;
 use App\Support\Settings;
+use App\Support\Teams\Teams;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -78,6 +80,45 @@ class Billing
         return (bool) $bank['enabled'] && filled($bank['account_number']);
     }
 
+    // ── Billing owner ────────────────────────────────────────────────
+
+    /**
+     * Team that pays (team billing inside a team), or null when the user pays.
+     */
+    public static function ownerTeam(): ?Team
+    {
+        return Teams::teamBilling() ? Teams::current() : null;
+    }
+
+    /**
+     * With team billing only the team's owners and admins choose, pay, renew or cancel.
+     */
+    public function canManageBilling(User $user): bool
+    {
+        $team = static::ownerTeam();
+
+        return $team === null || $user->canManageTeam($team);
+    }
+
+    protected function assertCanManageBilling(User $user): void
+    {
+        if (! $this->canManageBilling($user)) {
+            throw new RuntimeException('Only owners and admins can manage the '.strtolower(Teams::label()).'\'s plan.');
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    protected function newSubscription(User $user, array $attributes): Subscription
+    {
+        return Subscription::query()->create([
+            'user_id' => $user->id,
+            'team_id' => static::ownerTeam()?->getKey(),
+            ...$attributes,
+        ]);
+    }
+
     // ── Starting a plan ──────────────────────────────────────────────
 
     /**
@@ -92,7 +133,7 @@ class Billing
     {
         return $plan->type === PlanType::Subscription
             && $plan->trial_days > 0
-            && ! $user->subscriptions()->where('plan_id', $plan->id)->exists();
+            && ! $user->billableSubscriptions()->where('plan_id', $plan->id)->exists();
     }
 
     public function assertCanSubscribe(User $user, Plan $plan): void
@@ -101,7 +142,9 @@ class Billing
             throw new RuntimeException('This plan is not available.');
         }
 
-        $current = $user->subscriptions()->where('plan_id', $plan->id)->latest('id')->first();
+        $this->assertCanManageBilling($user);
+
+        $current = $user->billableSubscriptions()->where('plan_id', $plan->id)->latest('id')->first();
 
         if ($current && ($current->isActive() || $current->status === SubscriptionStatus::Pending)) {
             throw new RuntimeException($current->status === SubscriptionStatus::Pending
@@ -126,7 +169,7 @@ class Billing
         if ($this->trialAvailable($user, $plan)) {
             $trialEnd = $now->copy()->addDays($plan->trial_days);
 
-            return $user->subscriptions()->create([
+            return $this->newSubscription($user, [
                 'plan_id' => $plan->id,
                 'status' => SubscriptionStatus::Trialing,
                 'starts_at' => $now,
@@ -136,7 +179,7 @@ class Billing
             ]);
         }
 
-        return $user->subscriptions()->create([
+        return $this->newSubscription($user, [
             'plan_id' => $plan->id,
             'status' => SubscriptionStatus::Active,
             'starts_at' => $now,
@@ -160,7 +203,11 @@ class Billing
 
         return DB::transaction(function () use ($user, $plan, $reference, $transactionId, $proofPath, $note, $renew): Payment {
             if ($renew) {
-                if ($renew->user_id !== $user->id || ! $renew->canRenew()) {
+                $this->assertCanManageBilling($user);
+
+                $owned = static::ownerTeam() ? $renew->team_id === static::ownerTeam()->getKey() : ($renew->user_id === $user->id && $renew->team_id === null);
+
+                if (! $owned || ! $renew->canRenew()) {
                     throw new RuntimeException('This plan can\'t be renewed right now.');
                 }
 
@@ -169,7 +216,7 @@ class Billing
             } else {
                 $this->assertCanSubscribe($user, $plan);
 
-                $subscription = $user->subscriptions()->create([
+                $subscription = $this->newSubscription($user, [
                     'plan_id' => $plan->id,
                     'status' => SubscriptionStatus::Pending,
                 ]);
@@ -179,6 +226,7 @@ class Billing
             return Payment::query()->create([
                 'reference' => $reference,
                 'user_id' => $user->id,
+                'team_id' => $subscription->team_id,
                 'plan_id' => $plan->id,
                 'subscription_id' => $subscription->id,
                 'kind' => $kind,

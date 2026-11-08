@@ -5,6 +5,7 @@ namespace App\Filament\Pages;
 use App\Support\ModuleBuilder\ModuleBuilder as Builder;
 use App\Support\ModuleBuilder\ModuleBuilderException;
 use App\Support\ModuleBuilder\ModuleDefinition;
+use App\Support\Teams\Teams;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
@@ -80,6 +81,19 @@ class ModuleBuilder extends Page
                                     ? 'Singular, e.g. Post or BlogPost.'
                                     : "Model App\\Models\\{$model} · table ".Str::snake(Str::pluralStudly($model));
                             }),
+                        Select::make('panel')
+                            ->label('Panel')
+                            ->options(['admin' => 'Admin panel (staff)', 'app' => 'Customer panel'])
+                            ->default('admin')
+                            ->selectablePlaceholder(false)
+                            ->live()
+                            ->afterStateUpdated(fn (?string $state, Set $set) => $state === 'app' ? null : $set('belongs_to_team', false))
+                            ->visible(fn (): bool => Teams::appPanelEnabled()),
+                        Toggle::make('belongs_to_team')
+                            ->label(fn (): string => 'Belongs to '.strtolower(Teams::label()))
+                            ->helperText(fn (): string => 'Adds team_id — each '.strtolower(Teams::label()).' only sees its own rows.')
+                            ->default(fn (): bool => Teams::enabled())
+                            ->visible(fn (Get $get): bool => Teams::enabled() && $get('panel') === 'app'),
                     ]),
 
                 Section::make('Menu')

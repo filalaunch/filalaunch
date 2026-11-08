@@ -44,10 +44,10 @@ class ModuleAccess
      */
     public static function kitPrefixes(): array
     {
-        return array_values(array_unique(array_map(
-            fn (string $model): string => PermissionSync::prefixFor($model),
-            ModuleRemover::protectedModels(),
-        )));
+        return array_values(array_unique([
+            'admin', // admin.access — staff entry to /admin
+            ...array_map(fn (string $model): string => PermissionSync::prefixFor($model), ModuleRemover::protectedModels()),
+        ]));
     }
 
     public function mode(string $prefix): AccessMode
