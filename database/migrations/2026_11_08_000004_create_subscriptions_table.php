@@ -11,6 +11,7 @@ return new class extends Migration
         Schema::create('subscriptions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('team_id')->nullable()->constrained('teams')->cascadeOnDelete(); // team billing; null = billed to the user
             $table->foreignId('plan_id')->constrained('plans')->restrictOnDelete();
             $table->string('status')->default('pending'); // pending | trialing | active | canceled | expired
             $table->timestamp('starts_at')->nullable();

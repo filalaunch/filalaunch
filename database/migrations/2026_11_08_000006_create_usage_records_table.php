@@ -11,6 +11,7 @@ return new class extends Migration
         Schema::create('usage_records', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('team_id')->nullable()->constrained('teams')->cascadeOnDelete(); // team billing; null = billed to the user
             $table->foreignId('meter_id')->constrained('meters')->cascadeOnDelete();
             $table->foreignId('subscription_id')->nullable()->constrained('subscriptions')->nullOnDelete();
             $table->unsignedBigInteger('quantity')->default(1);

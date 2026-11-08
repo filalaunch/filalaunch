@@ -118,7 +118,7 @@ Generate a complete CRUD module from a form or one command — **migration, mode
 
 ### Settings (`System` menu, Super Admin only)
 
-- App name, mail (log or SMTP, with a test email), customer panel & teams, currency, grace period, Module Builder mode, trash days — **no `.env` editing needed**. SMTP password stored encrypted.
+- App name, mail (log or SMTP, with a test email), customer panel & teams, billing (plan types, currency, bank transfer, gateways), Module Builder mode, trash days — **no `.env` editing needed**. SMTP password stored encrypted.
 
 ### Built-in safety rules
 
@@ -266,7 +266,7 @@ With **Who buys plans? → The team** (default), plans on *Team plan* belong to 
 | General | App name |
 | Mail | Log only / SMTP (host, port, username, password, encryption), sender address and name, **Send test email** |
 | Customers & teams | Customer panel, teams, what to call a team, invitation expiry, who buys plans |
-| Billing | Default currency, grace period |
+| Billing | Plan types, default currency, grace period, bank transfer details, payment gateways (coming soon) |
 | Developer | Module Builder (automatic / always on / always off), trash days |
 
 Saved values are stored in the database (secrets encrypted with `APP_KEY`) and mirrored to `storage/app/filalaunch/settings.json`, which is read at boot — no extra query per request. They override `.env`; `.env` values are only the starting defaults. `APP_KEY`, `APP_ENV`, `APP_DEBUG`, `APP_URL` and the database connection stay in `.env`.
@@ -515,7 +515,7 @@ Everything lives under the **Billing** menu (Super Admin) and **My plan** in the
 | **Subscription** | Price, every *N* day/week/month/year, trial days | "Pro $19/month, 14-day trial" |
 | **Usage-based** | Optional base price + cycle, meters (included quantity, price per extra unit, block or allow overage) | "Pay as you go: 1,000 calls included, $0.01 per extra" |
 
-Not using a type? Untick it in **Billing → Billing settings → Plan types** — it disappears from the plan form and from customers. Users may hold several plans at once (e.g. a subscription plus a one-time add-on); access is the union.
+Not using a type? Untick it in **System → Settings → Billing → Plan types** — it disappears from the plan form and from customers. Users may hold several plans at once (e.g. a subscription plus a one-time add-on); access is the union.
 
 ### What a plan unlocks — access rules
 
@@ -531,14 +531,14 @@ Kit modules (Users, Roles, Permissions, Billing) are always role/permission and 
 
 ### How customers pay (bank transfer)
 
-1. **Billing → Billing settings**: enable bank transfer and enter your bank details.
+1. **System → Settings → Billing**: enable bank transfer and enter your bank details.
 2. The customer opens **My plan**, picks a plan:
    - free plans and first-time trials start instantly, no payment;
    - paid plans show the amount, your bank details and a unique reference (`FL-2026-7K3Q9X`); the customer enters the bank transaction reference and **uploads the receipt** (required).
 3. **Billing → Payments** (badge shows pending count): open the receipt, **Approve** → plan active, or **Reject** with a reason shown to the customer.
 4. **Renewal:** in the last 7 days of a period (or after it ends), **Renew** appears on My plan → same bank-transfer flow; approval extends from the current end date, so no days are lost. Access continues for `FILALAUNCH_GRACE_DAYS` (default 3) after a period ends.
 
-Online gateways (Stripe, PayPal, Razorpay, Cashfree, Kelviq, Polar.sh) are shown in Billing settings as *coming soon*.
+Online gateways (Stripe, PayPal, Razorpay, Cashfree, Kelviq, Polar.sh) are shown in System → Settings → Billing as *coming soon*.
 
 ### Managing subscriptions
 
@@ -650,7 +650,7 @@ app/
 │   ├── Pages/ModuleBuilder.php                   # Module Builder page
 │   ├── Pages/Modules.php                         # Modules page (list, delete)
 │   ├── Pages/MyPlan.php                          # customer plan page (user menu)
-│   ├── Pages/AccessRules.php, BillingSettings.php
+│   ├── Pages/AccessRules.php
 │   ├── Pages/SystemSettingsPage.php              # System → Settings
 │   ├── App/Resources/                            # customer panel resources (builder output)
 │   ├── App/Tenancy/RegisterTeam.php, EditTeam.php # create team, team settings + members

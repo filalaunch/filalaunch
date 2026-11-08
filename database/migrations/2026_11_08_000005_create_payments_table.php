@@ -12,6 +12,7 @@ return new class extends Migration
             $table->id();
             $table->string('reference')->unique();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('team_id')->nullable()->constrained('teams')->nullOnDelete(); // team billing; null = billed to the user
             $table->foreignId('plan_id')->constrained('plans')->restrictOnDelete();
             $table->foreignId('subscription_id')->nullable()->constrained('subscriptions')->nullOnDelete();
             $table->string('kind')->default('new'); // new | renewal

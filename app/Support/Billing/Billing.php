@@ -23,7 +23,7 @@ use RuntimeException;
 class Billing
 {
     /**
-     * Payment gateways shown in Billing settings. Only bank transfer works today;
+     * Payment gateways shown in System → Settings → Billing. Only bank transfer works today;
      * the others are listed as "Coming soon" with their key fields.
      *
      * @var array<string, array{label: string, fields: array<string, string>, secret: list<string>}>
@@ -54,7 +54,7 @@ class Billing
     }
 
     /**
-     * Plan types this SaaS uses (Billing settings). Others are hidden everywhere.
+     * Plan types this SaaS uses (System → Settings → Billing). Others are hidden everywhere.
      *
      * @return list<string>
      */

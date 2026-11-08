@@ -2,14 +2,19 @@
 
 namespace App\Filament\Pages;
 
+use App\Enums\PlanType;
 use App\Models\Subscription;
 use App\Models\Team;
+use App\Support\Billing\Billing;
 use App\Support\ModuleBuilder\Concerns\RefreshesAppCaches;
+use App\Support\Settings;
 use App\Support\SystemSettings;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
@@ -17,6 +22,7 @@ use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\EmbeddedSchema;
 use Filament\Schemas\Components\Form;
+use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
@@ -30,7 +36,8 @@ use Throwable;
 use UnitEnum;
 
 /**
- * System → Settings: everything a kit user would otherwise put in .env.
+ * System → Settings: everything a kit user would otherwise put in .env,
+ * plus billing setup (plan types, bank transfer, gateways).
  * Saved values override .env (see App\Support\SystemSettings).
  */
 class SystemSettingsPage extends Page
@@ -74,7 +81,13 @@ class SystemSettingsPage extends Page
 
     public function mount(): void
     {
-        $this->form->fill(SystemSettings::current());
+        $billing = app(Billing::class);
+
+        $this->form->fill([
+            ...SystemSettings::current(),
+            'plan_types' => $billing->enabledTypes(),
+            'bank' => $billing->bankTransfer(),
+        ]);
     }
 
     public function form(Schema $schema): Schema
@@ -255,8 +268,19 @@ class SystemSettingsPage extends Page
         return Tab::make('Billing')
             ->icon(Heroicon::OutlinedBanknotes)
             ->schema([
+                Section::make('Plan types')
+                    ->description('Use only what your SaaS needs — disabled types are hidden from the plan form and from customers.')
+                    ->schema([
+                        CheckboxList::make('plan_types')
+                            ->hiddenLabel()
+                            ->options(collect(PlanType::cases())->mapWithKeys(fn (PlanType $type): array => [$type->value => $type->getLabel()])->all())
+                            ->descriptions(collect(PlanType::cases())->mapWithKeys(fn (PlanType $type): array => [$type->value => $type->getDescription()])->all())
+                            ->required()
+                            ->minItems(1)
+                            ->columns(3),
+                    ]),
+
                 Section::make('Money')
-                    ->description('Plan types, bank details and gateways are under Billing → Billing settings.')
                     ->columns(2)
                     ->schema([
                         Select::make('currency')
@@ -274,6 +298,53 @@ class SystemSettingsPage extends Page
                             ->suffix('days')
                             ->required()
                             ->helperText('Access continues this long after a paid period ends, so customers can renew.'),
+                    ]),
+
+                Section::make('Bank transfer')
+                    ->description('Customers pay to this account and upload the receipt. You approve the payment under Billing → Payments.')
+                    ->columns(2)
+                    ->schema([
+                        Toggle::make('bank.enabled')
+                            ->label('Accept bank transfers')
+                            ->live()
+                            ->columnSpanFull(),
+                        TextInput::make('bank.account_name')
+                            ->label('Account holder name')
+                            ->required(fn (Get $get): bool => (bool) $get('bank.enabled')),
+                        TextInput::make('bank.account_number')
+                            ->label('Account number / IBAN')
+                            ->required(fn (Get $get): bool => (bool) $get('bank.enabled')),
+                        TextInput::make('bank.bank_name')
+                            ->label('Bank name')
+                            ->required(fn (Get $get): bool => (bool) $get('bank.enabled')),
+                        TextInput::make('bank.routing_code')
+                            ->label('IFSC / SWIFT / routing code'),
+                        TextInput::make('bank.branch')
+                            ->label('Branch / bank address'),
+                        Textarea::make('bank.instructions')
+                            ->label('Instructions for customers')
+                            ->rows(3)
+                            ->placeholder('Write the payment reference in the transfer description.')
+                            ->columnSpanFull(),
+                    ]),
+
+                Section::make('Payment gateways')
+                    ->description('Online payments are coming in a future update. Bank transfer is available today.')
+                    ->schema([
+                        Grid::make(['default' => 1, 'md' => 2, 'xl' => 3])
+                            ->schema(collect(Billing::GATEWAYS)->map(fn (array $gateway, string $key): Section => Section::make($gateway['label'])
+                                ->description('Coming soon')
+                                ->icon(Heroicon::OutlinedClock)
+                                ->compact()
+                                ->disabled()
+                                ->schema([
+                                    Toggle::make("gateways.{$key}.enabled")->label('Enabled'),
+                                    ...collect($gateway['fields'])->map(fn (string $label, string $field): TextInput => TextInput::make("gateways.{$key}.{$field}")
+                                        ->label($label)
+                                        ->password(in_array($field, $gateway['secret'], true)))
+                                        ->values()
+                                        ->all(),
+                                ]))->values()->all()),
                     ]),
             ]);
     }
@@ -335,6 +406,10 @@ class SystemSettingsPage extends Page
 
         $before = SystemSettings::current();
         SystemSettings::save($data);
+
+        $settings = app(Settings::class);
+        $settings->set('billing.plan_types', array_values($data['plan_types']));
+        $settings->setGroup('billing.bank_transfer', array_intersect_key((array) $data['bank'], array_flip(Billing::BANK_FIELDS)));
 
         // Panels / resources may have appeared or disappeared.
         $warnings = $this->refreshAppCaches();

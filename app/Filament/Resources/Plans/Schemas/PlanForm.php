@@ -62,7 +62,7 @@ class PlanForm
                             ->required()
                             ->inline()
                             ->live()
-                            ->helperText('Only the plan types enabled in Billing settings are shown.')
+                            ->helperText('Only the plan types enabled in Settings → Billing are shown.')
                             ->columnSpanFull(),
                     ]),
 

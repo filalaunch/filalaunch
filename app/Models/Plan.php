@@ -77,7 +77,7 @@ class Plan extends Model
     // ── Scopes ───────────────────────────────────────────────────────
 
     /**
-     * Active plans of the plan types enabled in Billing settings.
+     * Active plans of the plan types enabled in System → Settings → Billing.
      */
     public function scopeAvailable(Builder $query): Builder
     {

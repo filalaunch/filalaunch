@@ -61,8 +61,8 @@ app/
 │   ├── Pages/Modules.php                         Modules page: list, delete, delete all (custom-data table)
 │   ├── Widgets/ModuleTrashWidget.php             Trash list + restore; $isDiscovered = false (not on dashboard)
 │   ├── Pages/MyPlan.php (+ resources/views/filament/pages/my-plan.blade.php)  customer plan page
-│   ├── Pages/AccessRules.php, Pages/BillingSettings.php
-│   ├── Pages/SystemSettingsPage.php              System → Settings (slug "settings", Super Admin)
+│   ├── Pages/AccessRules.php
+│   ├── Pages/SystemSettingsPage.php              System → Settings (slug "settings", Super Admin): general, mail, customers & teams, billing (plan types, bank transfer, gateways), developer
 │   ├── App/Resources/                            customer panel resources (builder output for panel "app")
 │   ├── App/Pages/                                customer panel pages
 │   ├── App/Tenancy/RegisterTeam.php              create team (Filament RegisterTenant)
@@ -560,9 +560,9 @@ Trash entry (`storage/app/filalaunch/trash/{Ymd_His_v}_{Model}/`): `manifest.jso
 | `plans` | `type` (one_time / subscription / usage), `price` (minor units), `currency`, `interval` + `interval_count`, `trial_days`, `access_days` (one-time; null = lifetime), `features` (json), `is_active`, `is_featured`, `sort` |
 | `plan_permission` | plan ↔ Spatie permission (cascade both ways) |
 | `meters`, `plan_meters` | meter `key` (used in code), `reset` (monthly / cycle / never); per plan: `included` (null = unlimited), `unit_price`, `on_limit` (block / overage) |
-| `subscriptions` | `status` (pending / trialing / active / canceled / expired), `starts_at`, `trial_ends_at`, `period_starts_at`, `ends_at` (null = no end), `canceled_at`, `gateway`, `gateway_id` |
-| `payments` | `reference` (unique), `kind` (new / renewal), `amount`, `currency`, `method`, `status`, `transaction_id`, `proof_path` (private), `note`, `review_note`, `reviewed_by/at` |
-| `usage_records` | user, meter, subscription, quantity, recorded_at |
+| `subscriptions` | `team_id` (nullable — team billing), `status` (pending / trialing / active / canceled / expired), `starts_at`, `trial_ends_at`, `period_starts_at`, `ends_at` (null = no end), `canceled_at`, `gateway`, `gateway_id` |
+| `payments` | `team_id` (nullable), `reference` (unique), `kind` (new / renewal), `amount`, `currency`, `method`, `status`, `transaction_id`, `proof_path` (private), `note`, `review_note`, `reviewed_by/at` |
+| `usage_records` | user, team (nullable), meter, subscription, quantity, recorded_at |
 | `module_access_rules` | `prefix` → `mode`; no row = permission |
 | `settings` | `billing.plan_types`, `billing.bank_transfer` (gateway keys later; secret fields encrypted) |
 
@@ -586,9 +586,8 @@ Trash entry (`storage/app/filalaunch/trash/{Ymd_His_v}_{Model}/`): `manifest.jso
 
 ### 15.4 Extending
 
-- New gateway: implement checkout + webhook that call `Billing` (create payment with `method = <gateway>`, then `approve()`), store keys via `Settings::setGroup('billing.gateways.<key>', $values, $secretFields)`, enable its card in `BillingSettings`.
+- New gateway: implement checkout + webhook that call `Billing` (create payment with `method = <gateway>`, then `approve()`), store keys via `Settings::setGroup('billing.gateways.<key>', $values, $secretFields)`, enable its card in the Billing tab of `SystemSettingsPage`.
 - New plan type: add a `PlanType` case, handle it in `Plan::hasPeriod()`, `periodEnd()`, `priceLabel()` and `PlanForm` visibility closures.
-- Currency settings screen: replace `Billing::currency()` with a setting (plans store their own `currency` already).
 
 ---
 
@@ -632,4 +631,5 @@ Trash entry (`storage/app/filalaunch/trash/{Ymd_His_v}_{Model}/`): `manifest.jso
 - Stored in `settings` (key `system`, JSON). Secrets: `Crypt::encryptString`, empty input keeps the saved value, never filled back into the form.
 - `SystemSettings::apply()` runs first in `AppServiceProvider::register()` (before panel providers) from `storage/app/filalaunch/settings.json`, falling back to one DB read that rebuilds the file. Works with `config:cache` (values are set at runtime).
 - After save: route/component caches refreshed (`RefreshesAppCaches`) and a full page reload, because panels and menus may change. `migrate`/`migrate:fresh` deletes the cache file (`MigrationsEnded` listener).
+- The Billing tab also edits `billing.plan_types` and `billing.bank_transfer` through `App\Support\Settings` (the former Billing settings page; one settings screen only).
 - To add a setting: add a `MAP` entry (+ config default), a field on `SystemSettingsPage`, and document it here.
